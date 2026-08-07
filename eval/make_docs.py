@@ -108,26 +108,52 @@ def build_html(runs: list[dict], docs: Path) -> str:
         gallery.append(f'<tr><th class="cid">{cid}<div class="pr">{html.escape(prompt)}</div></th>{"".join(cells)}</tr>')
 
     empty = "" if runs else '<p class="empty">Noch keine Ergebnisse — erst einen Feldlauf mit <code>image_eval.py</code> fahren.</p>'
+    # SouthByte Web-CI (southbyte-brand skill): Dark-Theme, Matrix-Grid, Wortmarke.
     return f"""<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>southbyte-image — Modellvergleich</title>
+<title>SOUTH.BYTE — Text-to-Image Modellvergleich</title>
 <style>
- body{{font-family:system-ui,sans-serif;margin:2rem;max-width:1100px}}
+ :root{{--bg:#060C0A;--bg-raised:#0A1410;--bg-card:#0E1A14;--border:#162A1E;--border-hi:#1A5C38;
+   --green:#00E676;--green-dim:#00994A;--text:#D4EDE0;--text-muted:#5E8A72;
+   --mono:'Courier New',Consolas,'SF Mono',Menlo,monospace;--sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}}
+ *{{box-sizing:border-box}}
+ body{{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7}}
+ .grid-bg{{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+   background-image:linear-gradient(rgba(0,230,118,.15) 1px,transparent 1px),
+     linear-gradient(90deg,rgba(0,230,118,.15) 1px,transparent 1px);background-size:80px 80px}}
+ .wrap{{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:2.5rem 1.25rem}}
+ .wordmark{{font-family:var(--mono);font-weight:700;font-size:1.4rem;letter-spacing:1.4px;color:var(--text)}}
+ .wordmark .dot{{color:var(--green)}}
+ .tagline{{font-family:var(--mono);font-size:.68rem;letter-spacing:.25em;text-transform:uppercase;
+   color:var(--text-muted);margin-top:.3rem}}
+ h1{{font-family:var(--mono);color:var(--text);font-size:1.7rem;margin:1.4rem 0 .4rem}}
+ h2{{font-family:var(--mono);text-transform:uppercase;letter-spacing:.15em;color:var(--green);
+   border-top:1px solid var(--border-hi);padding-top:.6rem;margin-top:2.4rem}}
  table{{border-collapse:collapse;width:100%;margin:1rem 0}}
- th,td{{border:1px solid #ddd;padding:.5rem;text-align:center;vertical-align:top}}
- img{{max-width:220px;height:auto;border-radius:4px}}
- .cid{{text-align:left;font-family:monospace}} .pr{{font:400 .8rem/1.3 sans-serif;color:#666;max-width:220px}}
- .cap{{font-size:.75rem;color:#555;margin-top:.25rem}} .miss{{color:#bbb}} .empty{{color:#a00}}
- a{{color:#06c}}
-</style></head><body>
-<h1>southbyte-image — Modellvergleich (DGX Spark / GB10)</h1>
+ th,td{{border:1px solid var(--border);padding:.5rem;text-align:center;vertical-align:top}}
+ th{{font-family:var(--mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;
+   color:var(--text-muted);background:var(--bg-raised)}}
+ img{{max-width:220px;height:auto;border-radius:4px;border:1px solid var(--border)}}
+ .cid{{text-align:left;font-family:var(--mono);color:var(--green)}}
+ .pr{{font:400 .8rem/1.3 var(--sans);color:var(--text-muted);max-width:220px}}
+ .cap{{font-size:.75rem;color:var(--text-muted);margin-top:.25rem}} .miss{{color:var(--text-dim,#2E5040)}}
+ .empty{{color:var(--green)}}
+ a{{color:var(--green)}} a:hover{{color:var(--green-dim)}} code{{font-family:var(--mono);color:var(--green)}}
+ footer{{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--border);color:var(--text-muted);font-size:.85rem}}
+ footer .wm{{font-family:var(--mono);font-weight:700;letter-spacing:1px;color:var(--text)}}
+ footer .wm .dot{{color:var(--green)}}
+</style></head><body><div class="grid-bg"></div><div class="wrap">
+<header><div class="wordmark">SOUTH<span class="dot">.</span>BYTE</div>
+<div class="tagline">AI Governance &amp; IT-Beratung</div></header>
+<h1>Text-to-Image — Modellvergleich (DGX Spark / GB10)</h1>
 {empty}
 <h2>Metriken</h2>
 <table><tr><th>Metrik</th>{head}</tr>{metrics}</table>
 <h2>Galerie</h2>
 <table><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table>
-<hr><p>Built by <a href="https://southbyte.de">southbyte</a>.</p>
-</body></html>
+<footer><span class="wm">SOUTH<span class="dot">.</span>BYTE</span> — Michael van den Berg ·
+<a href="https://southbyte.de">southbyte.de</a></footer>
+</div></body></html>
 """
 
 
