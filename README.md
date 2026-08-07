@@ -1,9 +1,11 @@
 # southbyte-image
 
-> **Status: in progress (Phase 1 — serving).** Implementation plan in
-> [`docs/ROADMAP.md`](docs/ROADMAP.md). The diffusers serving adapter
-> (`serving/`) is in place; testset + evaluation harness are next. Not yet
-> validated end-to-end on hardware.
+> **Status: Phases 1–3 code-complete.** Implementation plan in
+> [`docs/ROADMAP.md`](docs/ROADMAP.md). Serving adapter (`serving/`), German
+> testset (`testset/`, 22 cases), and evaluation harness (`eval/` — generation +
+> OCR text-rendering + VLM-judge adherence) are in place and syntax/import-validated.
+> **Not yet run on hardware** — Phase 4 (field comparison of the 3 models +
+> published `docs/` page) is the next step.
 
 Text-to-image serving + evaluation on the **NVIDIA DGX Spark** (GB10 SoC, sm_120,
 128 GB unified memory, aarch64). It will follow the same family conventions as the

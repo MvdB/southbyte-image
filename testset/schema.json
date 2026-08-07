@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "southbyte-image Testfall",
+  "description": "Ein Text-to-Image-Testfall (JSONL). Bewertung ist intrinsisch (Metrik) oder VLM-gejudged — kein LLM-Judge im Testplan-Sinn.",
+  "type": "object",
+  "required": ["id", "category", "prompt"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^img-[0-9]{3}[a-z]?$"},
+    "category": {
+      "type": "string",
+      "enum": ["adherence", "text_rendering", "composition", "style", "trap"],
+      "description": "adherence=Prompt-Treue, text_rendering=Text im Bild (OCR), composition=Anordnung, style=Stil, trap=schwierig/negation"
+    },
+    "language": {"type": "string", "enum": ["de", "en"], "default": "de"},
+    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"], "default": "medium"},
+    "prompt": {"type": "string", "minLength": 5},
+    "negative_prompt": {"type": "string"},
+    "expected_text": {
+      "type": "string",
+      "description": "Bei category=text_rendering: der exakte Text, der lesbar im Bild stehen soll (OCR-Gegenprobe, CER)."
+    },
+    "criteria": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Prüfpunkte für den VLM-Judge (was im Bild vorhanden/korrekt sein muss)."
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "trap": {"type": "boolean", "description": "Bewusst schwieriger Fall (deutsche Umlaute, Negation, viele Objekte)."},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
