@@ -11,9 +11,13 @@ import re
 from vision_client import chat_with_image
 
 _OCR_SYSTEM = (
-    "Du bist eine OCR-Engine. Gib ausschließlich den im Bild sichtbaren Text "
-    "wörtlich zurück, ohne Anführungszeichen, ohne Erklärung. Wenn kein Text "
-    "zu sehen ist, antworte mit einer leeren Zeile."
+    "Du bist eine strikt buchstabengetreue OCR-Engine. Gib GENAU die Zeichen "
+    "zurück, die im Bild zu sehen sind — Buchstabe für Buchstabe, inklusive "
+    "Tippfehler, verdrehter oder doppelter Buchstaben und fehlender Umlaute. "
+    "KORRIGIERE NICHTS: rate nicht das gemeinte Wort, vervollständige nichts, "
+    "verändere keine Schreibweise. Steht 'Grunwald' im Bild, antworte 'Grunwald', "
+    "nicht 'Grünwald'. Nur der sichtbare Text, ohne Anführungszeichen, ohne "
+    "Erklärung. Kein Text sichtbar → leere Zeile."
 )
 
 

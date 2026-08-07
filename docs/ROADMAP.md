@@ -44,17 +44,28 @@ docs/      publizierte Vergleichsseite (GitHub Pages)
 
 ## Metriken
 
+**Ein VLM für beide Rollen: Qwen3.6-VL** (lokal `Qwen--Qwen3.6-27B-FP8` bzw.
+`-35B-A3B-FP8`, beide multimodal), serviert via vLLM auf **Spark B** — Transkription
+(Textrendering) *und* Prompt-Treue-Judge. Kein separates OCR-Modell nötig.
+
 | Metrik | Verfahren | Judge? |
 |---|---|---|
-| Prompt-Treue | CLIPScore + VLM-as-Judge (lokales Gemma-4-Multimodal, konfigurierbar) | VLM |
-| **Textrendering** | OCR des Bildes vs. erwarteter Text → CER/exakt | nein |
+| Prompt-Treue | VLM-as-Judge (Qwen3.6-VL, konfigurierbar via `--judge-model`) | VLM |
+| **Textrendering** | VLM transkribiert **buchstabengetreu** → CER/exakt vs. erwarteter Text | nein |
 | Ästhetik/Qualität | VLM-Judge | VLM |
 | Performance | Latenz/Durchsatz je Auflösung × Schritte | nein |
 | Safety/NSFW | **aufgeschoben** (TODO) | — |
 
 Generieren und Bewerten laufen **in zwei Phasen** (nur ein großes Modell passt):
 erst alle Bilder erzeugen (Bildmodell geladen, Roh-Ausgabe zuerst auf Platte),
-dann Judge-VLM laden und die gespeicherten Bilder bewerten.
+dann das Qwen3.6-VL laden und die gespeicherten Bilder bewerten.
+
+**Wichtig — Auto-Korrektur-Falle:** instruktionsgetunte VLMs „reparieren" gern die
+Schreibweise (lesen „Grunwald" als „Grünwald") und verdecken damit genau die
+Fehler, die wir messen. Der Transkriptions-Prompt (`_OCR_SYSTEM` in `ocr_text.py`)
+erzwingt daher buchstabengetreue Ausgabe; vor dem ersten echten Lauf gegen die
+bekannt-fehlerhaften FLUX-Bilder (img-007 „BAKEERRIE", img-010 „Grunwald")
+**kalibrieren** (Muster von `judge_bench.py`: erst die Metrik prüfen, dann trauen).
 
 ## Wiederverwendung aus der Familie
 
