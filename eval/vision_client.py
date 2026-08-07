@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import urllib.request
+
+# Reasoning-Modelle (Qwen3.x) emittieren einen <think>…</think>-Vorspann; alles
+# bis zum schließenden Tag wird verworfen, damit nur die eigentliche Antwort bleibt.
+_THINK_RE = re.compile(r"^.*?</think>\s*", re.DOTALL)
 
 
 def chat_with_image(
@@ -33,7 +38,10 @@ def chat_with_image(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": content})
     payload = {"model": model, "messages": messages,
-               "max_tokens": max_tokens, "temperature": temperature}
+               "max_tokens": max_tokens, "temperature": temperature,
+               # Thinking abschalten — sonst verseucht der Reasoning-Vorspann
+               # OCR-CER und JSON-Parsing.
+               "chat_template_kwargs": {"enable_thinking": False}}
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/v1/chat/completions",
         data=json.dumps(payload).encode(),
@@ -41,4 +49,5 @@ def chat_with_image(
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"]
+    content = body["choices"][0]["message"]["content"] or ""
+    return _THINK_RE.sub("", content, count=1).strip()  # Reasoning-Vorspann abschneiden
