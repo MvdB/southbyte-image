@@ -16,6 +16,21 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parent
+_THUMB_PX = 360
+
+
+def _make_thumb(src: Path, dst: Path, max_px: int = _THUMB_PX) -> bool:
+    """Kleines JPEG-Thumbnail nur fürs Overview-Raster; Original bleibt erhalten.
+    Rückgabe False, falls Pillow fehlt (dann nutzt der Aufrufer das Original)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return False
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        im.thumbnail((max_px, max_px))
+        im.save(dst, "JPEG", quality=82)
+    return True
 
 
 def load_runs(results: Path) -> list[dict]:
@@ -70,18 +85,24 @@ def build_html(runs: list[dict], docs: Path) -> str:
             rec = next((x for x in r["records"] if x["id"] == cid and x.get("repeat", 0) == 0), None)
             if rec and rec.get("image"):
                 src_img = r["dir"] / rec["image"]
-                dst_rel = f"img/{r['summary']['model']}/{Path(rec['image']).name}"
-                dst = docs / dst_rel
-                dst.parent.mkdir(parents=True, exist_ok=True)
+                model = r["summary"]["model"]
+                name = Path(rec["image"]).name
+                full_rel = f"img/{model}/{name}"                        # Original (behalten)
+                thumb_rel = f"img/{model}/thumb/{Path(name).stem}.jpg"  # nur Overview
+                (docs / full_rel).parent.mkdir(parents=True, exist_ok=True)
+                (docs / thumb_rel).parent.mkdir(parents=True, exist_ok=True)
+                thumbed = src_img.exists() and _make_thumb(src_img, docs / thumb_rel)
                 if src_img.exists():
-                    shutil.copy2(src_img, dst)
+                    shutil.copy2(src_img, docs / full_rel)
+                if not thumbed:
+                    thumb_rel = full_rel  # Fallback ohne Pillow: Original im Raster
                 extra = []
                 if rec.get("adherence", {}).get("score") is not None:
                     extra.append(f"Treue {rec['adherence']['score']}")
                 if rec.get("text_rendering", {}).get("cer") is not None:
                     extra.append(f"CER {rec['text_rendering']['cer']}")
                 cap = " · ".join(extra)
-                cells.append(f'<td><img loading="lazy" src="{html.escape(dst_rel)}" alt="{cid}"><div class="cap">{html.escape(cap)}</div></td>')
+                cells.append(f'<td><a href="{html.escape(full_rel)}" title="Original"><img loading="lazy" src="{html.escape(thumb_rel)}" alt="{cid}"></a><div class="cap">{html.escape(cap)}</div></td>')
             else:
                 cells.append('<td class="miss">—</td>')
         gallery.append(f'<tr><th class="cid">{cid}<div class="pr">{html.escape(prompt)}</div></th>{"".join(cells)}</tr>')
