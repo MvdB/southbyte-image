@@ -1,8 +1,9 @@
 # southbyte-image
 
-> **Status: planned / reserved.** No implementation yet — this repo is a
-> placeholder so the [southbyte](https://southbyte.de) family links resolve. An
-> implementation plan is being drafted; see the tracking issue when it lands.
+> **Status: in progress (Phase 1 — serving).** Implementation plan in
+> [`docs/ROADMAP.md`](docs/ROADMAP.md). The diffusers serving adapter
+> (`serving/`) is in place; testset + evaluation harness are next. Not yet
+> validated end-to-end on hardware.
 
 Text-to-image serving + evaluation on the **NVIDIA DGX Spark** (GB10 SoC, sm_120,
 128 GB unified memory, aarch64). It will follow the same family conventions as the

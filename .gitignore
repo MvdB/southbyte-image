@@ -1,0 +1,11 @@
+.env
+results/
+*.png
+*.jpg
+__pycache__/
+*.py[cod]
+.venv/
+.venv-*/
+.DS_Store
+.idea/
+.vscode/
