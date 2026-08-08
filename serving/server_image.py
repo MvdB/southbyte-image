@@ -29,7 +29,7 @@ from typing import Any
 
 import torch
 import uvicorn
-from diffusers import AutoPipelineForText2Image
+from diffusers import AutoPipelineForText2Image, DiffusionPipeline
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -68,9 +68,17 @@ def _load_pipeline() -> Any:
     if not MODEL_DIR or not os.path.isdir(MODEL_PATH):
         raise RuntimeError(f"MODEL_DIR ungültig oder nicht gemountet: {MODEL_PATH!r}")
     # AutoPipeline erkennt FluxPipeline / QwenImagePipeline etc. aus model_index.json.
-    pipe = AutoPipelineForText2Image.from_pretrained(
-        MODEL_PATH, torch_dtype=DTYPE, local_files_only=True
-    )
+    # Custom-Pipelines (z.B. ErnieImagePipeline) stehen nicht im AutoPipeline-Mapping —
+    # dann greift DiffusionPipeline, das die Klasse direkt aus _class_name auflöst.
+    try:
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            MODEL_PATH, torch_dtype=DTYPE, local_files_only=True
+        )
+    except (ValueError, EnvironmentError):
+        pipe = DiffusionPipeline.from_pretrained(
+            MODEL_PATH, torch_dtype=DTYPE, local_files_only=True
+        )
+    print(f"[load] Pipeline: {type(pipe).__name__}", flush=True)
     pipe = pipe.to(DEVICE)
     # Auf dem GB10 (Unified Memory) bleibt alles auf der GPU; kein CPU-Offload nötig.
     return pipe
@@ -85,7 +93,8 @@ def _startup() -> None:
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"status": "ok" if _PIPE is not None else "loading",
-            "model": SERVED_NAME, "device": DEVICE, "dtype": str(DTYPE)}
+            "model": SERVED_NAME, "device": DEVICE, "dtype": str(DTYPE),
+            "pipeline": type(_PIPE).__name__ if _PIPE is not None else None}
 
 
 @app.get("/v1/models")
