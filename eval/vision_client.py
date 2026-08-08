@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import urllib.request
 
@@ -37,15 +38,23 @@ def chat_with_image(
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": content})
-    payload = {"model": model, "messages": messages,
-               "max_tokens": max_tokens, "temperature": temperature,
-               # Thinking abschalten — sonst verseucht der Reasoning-Vorspann
-               # OCR-CER und JSON-Parsing.
-               "chat_template_kwargs": {"enable_thinking": False}}
+    max_tokens = int(os.environ.get("VISION_MAX_TOKENS", max_tokens))
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens}
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("VISION_API_KEY", "")
+    if api_key:
+        # Cloud-Judge (z.B. claude-sonnet-5 via Proxy): Auth + schlankes Payload.
+        # Keine vLLM-spezifischen Felder (chat_template_kwargs) — Cloud lehnt sie ab.
+        headers["Authorization"] = f"Bearer {api_key}"
+    else:
+        # Lokale vLLM-Judges (Qwen): Thinking aus + temperature, sonst verseucht
+        # der Reasoning-Vorspann OCR-CER und JSON-Parsing.
+        payload["temperature"] = temperature
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/v1/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.loads(resp.read())
