@@ -33,10 +33,13 @@ docker run -d --name "${CONTAINER_NAME}" \
   -v "${HF_MODELS_DIR}:/hf_models:ro" \
   -e MODEL_DIR="${MODEL_DIR}" \
   -e SERVED_MODEL_NAME="${MODEL_DIR}" \
+  -e IMG_LOADER="${PROFILE_LOADER:-}" \
   -e IMG_STEPS="${PROFILE_STEPS:-20}" \
   -e IMG_GUIDANCE="${PROFILE_GUIDANCE:-3.5}" \
   -e IMG_SIZE="${PROFILE_SIZE:-1024x1024}" \
   -e IMG_DTYPE="${PROFILE_DTYPE:-bfloat16}" \
+  -e IMG_COMPONENTS_DIR="${PROFILE_COMPONENTS_DIR:-}" \
+  -e IMG_TRANSFORMER_FILE="${PROFILE_TRANSFORMER_FILE:-}" \
   "${IMAGE}"
 
 echo "Gestartet: ${CONTAINER_NAME} auf :${HOST_PORT}  (Modell ${MODEL_DIR})"

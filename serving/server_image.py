@@ -64,24 +64,26 @@ class GenRequest(BaseModel):
     model: str | None = None                # ignoriert (ein Adapter = ein Modell)
 
 
+_LOADER_NAME = ""  # gesetzt beim Laden, für /health
+
+
 def _load_pipeline() -> Any:
+    global _LOADER_NAME
     if not MODEL_DIR or not os.path.isdir(MODEL_PATH):
         raise RuntimeError(f"MODEL_DIR ungültig oder nicht gemountet: {MODEL_PATH!r}")
-    # AutoPipeline erkennt FluxPipeline / QwenImagePipeline etc. aus model_index.json.
-    # Custom-Pipelines (z.B. ErnieImagePipeline) stehen nicht im AutoPipeline-Mapping —
-    # dann greift DiffusionPipeline, das die Klasse direkt aus _class_name auflöst.
-    try:
-        pipe = AutoPipelineForText2Image.from_pretrained(
-            MODEL_PATH, torch_dtype=DTYPE, local_files_only=True
-        )
-    except (ValueError, EnvironmentError):
-        pipe = DiffusionPipeline.from_pretrained(
-            MODEL_PATH, torch_dtype=DTYPE, local_files_only=True
-        )
-    print(f"[load] Pipeline: {type(pipe).__name__}", flush=True)
-    pipe = pipe.to(DEVICE)
+    # Familie-agnostisch über die Loader-Registry. PROFILE_LOADER → IMG_LOADER wählt die
+    # Strategie (auto/diffusion/mage_flow/flux2_singlefile); ohne Angabe Auto-Detect.
+    # Zusatz-Optionen kommen als IMG_<KEY> (z.B. IMG_COMPONENTS_DIR) durch.
+    from loaders import load_pipeline
+    _reserved = {"IMG_LOADER", "IMG_STEPS", "IMG_GUIDANCE", "IMG_SIZE", "IMG_DTYPE"}
+    opts = {k[4:]: v for k, v in os.environ.items()
+            if k.startswith("IMG_") and k not in _reserved}
+    pipe, _LOADER_NAME = load_pipeline(
+        MODEL_PATH, loader=os.environ.get("IMG_LOADER"),
+        dtype_name=os.environ.get("IMG_DTYPE", "bfloat16"), opts=opts)
+    print(f"[load] loader={_LOADER_NAME} pipeline={type(pipe).__name__}", flush=True)
     # Auf dem GB10 (Unified Memory) bleibt alles auf der GPU; kein CPU-Offload nötig.
-    return pipe
+    return pipe.to(DEVICE)
 
 
 @app.on_event("startup")
@@ -94,6 +96,7 @@ def _startup() -> None:
 def health() -> dict[str, Any]:
     return {"status": "ok" if _PIPE is not None else "loading",
             "model": SERVED_NAME, "device": DEVICE, "dtype": str(DTYPE),
+            "loader": _LOADER_NAME or None,
             "pipeline": type(_PIPE).__name__ if _PIPE is not None else None}
 
 

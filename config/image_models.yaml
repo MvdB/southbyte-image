@@ -1,0 +1,65 @@
+# Registry der Bild-Modelle für den southbyte-image Harness.
+# loader: auto | diffusion | mage_flow | flux2_singlefile  (siehe serving/loaders.py)
+# active:false = Modell definiert, aber Serving-Deps noch nicht im Image (v2 nötig).
+defaults:
+  size: "1024x1024"
+  dtype: bfloat16
+  image: "spark-southbyte-image:v1"   # v2 sobald mage_flow/nunchaku gebaut
+
+models:
+  - name: FLUX.1-schnell
+    dir: black-forest-labs--FLUX.1-schnell
+    loader: auto
+    steps: 4
+    guidance: 0.0
+    active: true
+    notes: "timestep-distilliert, guidance-frei"
+
+  - name: Qwen-Image-2512
+    dir: Qwen--Qwen-Image-2512
+    loader: auto
+    steps: 20
+    guidance: 3.5
+    active: true
+
+  - name: Qwen-Image-Flash
+    dir: nvidia--Qwen-Image-Flash
+    loader: auto
+    steps: 8
+    guidance: 3.5
+    active: true
+    notes: "Sweet Spot Durchsatz/Qualität"
+
+  - name: ERNIE-Image-Turbo
+    dir: baidu--ERNIE-Image-Turbo
+    loader: diffusion            # ErnieImagePipeline (Custom-Klasse in diffusers 0.38)
+    steps: 8
+    guidance: 3.5
+    active: true
+    notes: "beste Prompt-Treue + Textrendering; ~122s/Bild"
+
+  # --- brauchen v2-Image ---
+  - name: Mage-Flow
+    dir: M-vdBerg--Mage-Flow
+    loader: mage_flow            # from mage_flow import MageFlowPipeline
+    steps: 20
+    guidance: 3.5
+    active: false
+    notes: "ext. Lib github.com/microsoft/Mage; flash-attn im Image nötig"
+
+  - name: FLUX.2-klein-9b
+    dir: black-forest-labs--FLUX.2-klein-9b-nvfp4
+    loader: flux2_singlefile     # Single-File-NVFP4-Transformer + FLUX.2-Komponenten
+    components_dir: black-forest-labs--FLUX.2-dev-NVFP4
+    steps: 8
+    guidance: 4.0
+    active: false
+    notes: "NVFP4 → nunchaku/torchao im Image; Encoder+VAE aus components_dir"
+
+  - name: FLUX.2-klein-4b
+    dir: black-forest-labs--FLUX.2-klein-4b-nvfp4
+    loader: flux2_singlefile
+    components_dir: black-forest-labs--FLUX.2-dev-NVFP4
+    steps: 8
+    guidance: 4.0
+    active: false

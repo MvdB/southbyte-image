@@ -41,11 +41,38 @@ def _norm(s: str) -> str:
 
 
 def cer(reference: str, hypothesis: str) -> float:
-    """Character-Error-Rate (0.0 = perfekt) auf normalisierten Strings."""
+    """Character-Error-Rate (0.0 = perfekt) auf normalisierten Strings — Voll-String."""
     ref, hyp = _norm(reference), _norm(hypothesis)
     if not ref:
         return 0.0 if not hyp else 1.0
     return _levenshtein(ref, hyp) / len(ref)
+
+
+def _min_substring_edit(needle: str, haystack: str) -> int:
+    """Min. Edit-Distanz, um `needle` gegen IRGENDEINEN Teilstring von `haystack`
+    zu matchen (fuzzy substring search). Row 0 = 0 → Start beliebig gratis;
+    Antwort = min über die letzte Zeile → Ende beliebig."""
+    if not needle:
+        return 0
+    if not haystack:
+        return len(needle)
+    prev = [0] * (len(haystack) + 1)          # leeres needle-Präfix matcht überall gratis
+    for i, cn in enumerate(needle, 1):
+        cur = [i]                              # needle-Präfix vs. leer = i Löschungen
+        for j, ch in enumerate(haystack, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (cn != ch)))
+        prev = cur
+    return min(prev)
+
+
+def cer_contains(reference: str, hypothesis: str) -> float:
+    """Containment-CER: ist der Soll-Text (annähernd) in der Transkription enthalten?
+    Bestraft fehlende/falsche Soll-Zeichen, NICHT zusätzlich gerenderten/beschriebenen
+    Text. Fair für Modelle, die mehr (korrekten) Text malen als der Minimal-Sollwert."""
+    ref, hyp = _norm(reference), _norm(hypothesis)
+    if not ref:
+        return 0.0 if not hyp else 1.0
+    return _min_substring_edit(ref, hyp) / len(ref)
 
 
 def score_text_rendering(case: dict, png_bytes: bytes, endpoint: str, model: str) -> dict:
@@ -56,6 +83,8 @@ def score_text_rendering(case: dict, png_bytes: bytes, endpoint: str, model: str
                                    png_bytes, system=_OCR_SYSTEM, max_tokens=128)
     except Exception as e:  # noqa: BLE001 — Netz-/Serverfehler als Metrik-Fehler melden
         return {"expected": expected, "ocr": None, "cer": None, "exact": False, "error": str(e)}
-    score = cer(expected, ocr_text)
-    return {"expected": expected, "ocr": ocr_text.strip(), "cer": round(score, 4),
-            "exact": _norm(expected) == _norm(ocr_text)}
+    # Containment-CER als faire Hauptmetrik; Voll-String-CER als Referenz behalten.
+    score = cer_contains(expected, ocr_text)
+    return {"expected": expected, "ocr": ocr_text.strip(),
+            "cer": round(score, 4), "cer_full": round(cer(expected, ocr_text), 4),
+            "exact": cer_contains(expected, ocr_text) == 0.0}

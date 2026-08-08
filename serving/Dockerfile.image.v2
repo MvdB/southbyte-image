@@ -1,0 +1,42 @@
+# southbyte-image Serving-Container v2 — universelles Image für ALLE Bild-Familien.
+# Baut auf v1 (diffusers-auto + custom-class) auf und ergänzt die schweren Deps EINMAL,
+# damit mage_flow- und flux2_singlefile-Loader laufen. Die mit ⚠️ markierten Layer sind
+# die wackeligen sm_120/aarch64-Bauten — beim Bauen verifizieren.
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONUNBUFFERED=1
+
+# ── Basis (wie v1): diffusers 0.38 deckt FluxPipeline/QwenImage/Flux2/Ernie ab ──
+RUN pip install --no-cache-dir \
+      "diffusers==0.38.0" \
+      "transformers>=5.5" \
+      accelerate safetensors sentencepiece protobuf pyyaml \
+      fastapi "uvicorn[standard]" pydantic
+
+# ── ⚠️ flash-attn (für mage_flow's text_encoder: attn_implementation=flash_attention_2)
+# Build-Isolation AUS, kompiliert gegen das Basis-Image-torch. Auf sm_120/CUDA13 der
+# riskante Schritt — schlägt er fehl: Alternative = mage_flow text_encoder auf "sdpa"
+# patchen (dann ist dieser Layer überflüssig).
+RUN pip install --no-cache-dir ninja setuptools wheel \
+ && pip install --no-cache-dir --no-build-isolation flash-attn==2.8.3 || \
+    echo "WARN flash-attn-Build fehlgeschlagen — mage_flow braucht sdpa-Patch"
+
+# ── mage_flow (github.com/microsoft/Mage, Verzeichnis mage_flow/) ──
+# Erwartet den geklonten Code unter build-context ./_vendor/mage_flow (COPY unten),
+# oder ersetze durch: RUN pip install "git+https://github.com/microsoft/Mage#subdirectory=mage_flow"
+COPY _vendor/mage_flow /opt/vendor/mage_flow
+RUN pip install --no-cache-dir --no-deps -e /opt/vendor/mage_flow || \
+    echo "WARN mage_flow nicht installiert (Code fehlt im Build-Context?)"
+
+# ── ⚠️ NVFP4-Backend für FLUX.2-Single-File (nunchaku ODER torchao) ──
+RUN pip install --no-cache-dir nunchaku || pip install --no-cache-dir torchao || \
+    echo "WARN kein NVFP4-Backend — flux2_singlefile ggf. eingeschränkt"
+
+# ── Server + Loader-Registry ──
+COPY server_image.py loaders.py /opt/southbyte-image/
+WORKDIR /opt/southbyte-image
+
+EXPOSE 8010
+CMD ["python", "server_image.py"]
