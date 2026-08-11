@@ -48,6 +48,14 @@ RUN pip install --no-cache-dir loguru einops pillow huggingface_hub \
 RUN pip install --no-cache-dir torchao  || echo "WARN torchao nicht installiert"
 RUN pip install --no-cache-dir nunchaku || echo "WARN nunchaku nicht installiert"
 
+# 2026-08-11: diffusers-ModelOpt-Quantizer-Fix. create_quantized_param baut nn.Parameter aus
+# den gepackten uint8-NVFP4-Weights OHNE requires_grad=False → RuntimeError ("Only Tensors of
+# floating point... can require gradients"). requires_grad an den dtype koppeln behebt das →
+# FLUX.2-NVFP4(-mixed) lädt. Idempotent (grep-guard).
+RUN Q=$(python -c "import diffusers.quantizers.modelopt.modelopt_quantizer as m; print(m.__file__)") \
+ && sed -i 's|torch.nn.Parameter(param_value.to(device=target_device))|torch.nn.Parameter(param_value.to(device=target_device), requires_grad=param_value.is_floating_point())|' "$Q" \
+ && grep -q 'requires_grad=param_value.is_floating_point' "$Q" && echo "modelopt-Patch ok" || echo "WARN modelopt-Patch nicht gesetzt"
+
 # ── Server + Loader-Registry ──
 # 2026-08-11: serving/-Prefix — v2 baut mit Context=Repo-Root (nötig für COPY _vendor/mage_flow
 # oben), daher liegen server_image.py/loaders.py unter serving/, nicht im Context-Root (v1 baute

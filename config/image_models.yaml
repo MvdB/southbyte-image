@@ -67,3 +67,13 @@ models:
     active: false
     image: "spark-southbyte-image:v2"
     notes: "PENDING 2026-08-11: wie klein-9b — NVFP4-Transformer laedt nicht via diffusers from_single_file (Quant-Scales), braucht nunchaku-FLUX2-Loader. Integration offen."
+
+  - name: FLUX.2-dev
+    dir: black-forest-labs--FLUX.2-dev-NVFP4
+    loader: flux2_singlefile          # nutzt flux2-dev-nvfp4-mixed (Loader bevorzugt -mixed)
+    components_dir: black-forest-labs--FLUX.2-dev
+    steps: 20
+    guidance: 4.0
+    active: false                     # nach Smoke aktivieren
+    image: "spark-southbyte-image:v2"
+    notes: "WIP 2026-08-11: Durchbruch — NVFP4-mixed-Transformer LÄDT (Parameter-Patch im Image) + volle Pipeline PASST in Speicher (~70GB, kein OOM). ABER Inferenz blockiert: modelopt 0.44 ⟷ diffusers 0.38 quant-config-inkompatibel (_default_disabled_quantizer_cfg: List vs Dict) + pre_quantized-Pfad komprimiert Module nicht → gepackte NVFP4-Weights in normalen Linear → Forward-Shape-Fehler (6144 vs 3072). Braucht abgestimmte diffusers/modelopt-Versionen (eigenes Image, nicht mage_flows 0.38-Pin brechen) oder ComfyUI/TensorRT."

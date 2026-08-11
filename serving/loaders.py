@@ -96,7 +96,15 @@ def _load_flux2_singlefile(model_path: str, dtype, opts: dict) -> Any:
                       text_encoder + vae); der Single-File-Transformer wird eingesetzt.
       TRANSFORMER_FILE  .safetensors des quantisierten Transformers (Default: erste im dir).
     """
-    from diffusers import Flux2Pipeline, Flux2Transformer2DModel  # type: ignore
+    from diffusers import (Flux2Pipeline, Flux2Transformer2DModel,  # type: ignore
+                           NVIDIAModelOptConfig)
+    import modelopt.torch.quantization as mtq  # type: ignore
+    from modelopt.torch.opt import enable_huggingface_checkpointing  # type: ignore
+    # 2026-08-11: Die FLUX.2-NVFP4-Checkpoints sind NVIDIA-ModelOpt-NVFP4. enable_huggingface_
+    # checkpointing() patcht diffusers/HF-Laden dafür; ohne die ModelOpt-Quant-Config lädt
+    # diffusers die gepackten Weights falsch (Shape-/Parameter-Fehler). Der "-mixed"-Checkpoint
+    # kommt durch den Konverter (die voll-nvfp4-Variante hat noch einen diffusers-chunk-Bug).
+    enable_huggingface_checkpointing()
     # 2026-08-11: COMPONENTS_DIR kommt aus der Config als bloßer Verzeichnis-NAME
     # (z.B. black-forest-labs--FLUX.2-dev). Relativ zum Modell-Store auflösen (Parent von
     # model_path = /hf_models), sonst sucht from_pretrained im CWD/Hub → schlägt offline fehl.
@@ -106,16 +114,23 @@ def _load_flux2_singlefile(model_path: str, dtype, opts: dict) -> Any:
     else:
         comp = model_path
     tf_file = opts.get("TRANSFORMER_FILE")
+    if tf_file and not Path(tf_file).is_absolute():
+        tf_file = str(Path(model_path) / tf_file)   # bloßer Name → unter model_path
     if not tf_file:
         cands = sorted(Path(model_path).glob("*.safetensors"))
         if not cands:
             raise RuntimeError(f"kein Single-File-Transformer in {model_path}")
-        tf_file = str(cands[0])
+        # "-mixed"-Variante bevorzugen: sie kommt durch den diffusers-Konverter; die voll-nvfp4-
+        # Datei hat noch den chunk-Bug (torch.chunk auf 0-dim-Scale). Sonst erste.
+        mixed = [c for c in cands if "mixed" in c.name.lower()]
+        tf_file = str((mixed or cands)[0])
     # config= auf die lokale FLUX.2-dev/transformer-Config zeigen (Single-File-Checkpoint hat
     # keine eigene config.json → sonst Hub-Fetch, offline-Fehler). local_files_only offline-safe.
     _tf_cfg = str(Path(comp) / "transformer")
+    # modelopt_config direkt setzen umgeht den diffusers-Bug in get_config_from_quant_type (NVFP4).
+    _qc = NVIDIAModelOptConfig(quant_type="NVFP4", modelopt_config=mtq.NVFP4_DEFAULT_CFG)
     transformer = Flux2Transformer2DModel.from_single_file(
-        tf_file, config=_tf_cfg, local_files_only=True, torch_dtype=dtype)
+        tf_file, config=_tf_cfg, quantization_config=_qc, local_files_only=True, torch_dtype=dtype)
     return Flux2Pipeline.from_pretrained(
         comp, transformer=transformer, torch_dtype=dtype, local_files_only=True)
 
