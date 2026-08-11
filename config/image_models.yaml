@@ -4,7 +4,7 @@
 defaults:
   size: "1024x1024"
   dtype: bfloat16
-  image: "spark-southbyte-image:v1"   # v2 sobald mage_flow/nunchaku gebaut
+  image: "spark-southbyte-image:v2"   # 2026-08-11: v2 gebaut (flash-attn/mage_flow/nunchaku ok)
 
 models:
   - name: FLUX.1-schnell
@@ -44,8 +44,8 @@ models:
     loader: mage_flow            # from mage_flow import MageFlowPipeline
     steps: 20
     guidance: 3.5
-    active: false
-    notes: "ext. Lib github.com/microsoft/Mage; flash-attn im Image nötig"
+    active: true
+    notes: "2026-08-11 aktiv (v2). ext. Lib github.com/microsoft/Mage; DiT nutzt flash-attn (2.7.4 aus Base-Image), Text-Encoder sdpa (VF_HF_ATTN_IMPL) + ImportError→sdpa-Fallback."
 
   - name: FLUX.2-klein-9b
     dir: black-forest-labs--FLUX.2-klein-9b-nvfp4
@@ -53,8 +53,8 @@ models:
     components_dir: black-forest-labs--FLUX.2-dev-NVFP4
     steps: 8
     guidance: 4.0
-    active: false
-    notes: "NVFP4 → nunchaku/torchao im Image; Encoder+VAE aus components_dir"
+    active: true
+    notes: "2026-08-11 aktiv (v2). NVFP4 → nunchaku 0.16.1 im Image; Encoder+VAE aus components_dir"
 
   - name: FLUX.2-klein-4b
     dir: black-forest-labs--FLUX.2-klein-4b-nvfp4
@@ -62,4 +62,5 @@ models:
     components_dir: black-forest-labs--FLUX.2-dev-NVFP4
     steps: 8
     guidance: 4.0
-    active: false
+    active: true
+    notes: "2026-08-11 aktiv (v2). NVFP4 4b-Variante; nunchaku 0.16.1"
