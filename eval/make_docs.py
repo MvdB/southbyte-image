@@ -26,6 +26,7 @@ SORT_CSS = (
     " table th::after{content:' ';opacity:.35;font-size:.75em}"
     " table th[aria-sort=ascending]::after{content:' \\25B2';opacity:.9}"
     " table th[aria-sort=descending]::after{content:' \\25BC';opacity:.9}"
+    " table td.best{font-weight:700;color:var(--green);background:var(--bg-raised)}"
 )
 SORT_SCRIPT = """
 <script>
@@ -56,6 +57,17 @@ SORT_SCRIPT = """
         th.setAttribute('aria-sort',asc?'ascending':'descending');
         sortTable(table,idx,asc);
       });
+    });
+  });
+  // Bestwert je Spalte grün markieren (data-best=min|max am th); überlebt Sortierung.
+  document.querySelectorAll('table.sortable').forEach(function(table){
+    var head=table.tHead, tb=table.tBodies[0]; if(!head||!head.rows.length||!tb) return;
+    Array.prototype.forEach.call(head.rows[0].cells,function(th,idx){
+      var dir=th.getAttribute('data-best'); if(dir!=='min'&&dir!=='max') return;
+      var best=null;
+      Array.prototype.forEach.call(tb.rows,function(r){var c=r.cells[idx];if(!c)return;var v=num(val(c));if(v===null)return;if(best===null||(dir==='min'?v<best:v>best))best=v;});
+      if(best===null)return;
+      Array.prototype.forEach.call(tb.rows,function(r){var c=r.cells[idx];if(!c)return;var v=num(val(c));if(v!==null&&v===best)c.classList.add('best');});
     });
   });
 })();
@@ -240,7 +252,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
 {empty}
 <h2>Metriken</h2>
 <div class="scroll"><table class="metrics sortable"><thead><tr>
-<th class="mname">Modell</th><th>Prompt-Treue</th><th>Text-CER</th><th>Text exakt</th><th>Ø Zeit/Bild</th><th>Bilder</th>
+<th class="mname">Modell</th><th data-best="max">Prompt-Treue</th><th data-best="min">Text-CER</th><th data-best="max">Text exakt</th><th data-best="min">Ø Zeit/Bild</th><th>Bilder</th>
 </tr></thead><tbody>{metrics_rows}</tbody></table></div>
 <p class="hint">Spaltenüberschrift klicken zum Sortieren · Modellname → Model-Card</p>
 <h2>Galerie</h2>
