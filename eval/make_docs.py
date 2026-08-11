@@ -11,12 +11,81 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import shutil
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parent
 _THUMB_PX = 360
+_CONFIG = _ROOT / "config" / "image_models.yaml"
+
+# Klick-Sortierung (wie southbyte-vllm/results): Header klicken → tbody-Zeilen sortieren.
+SORT_CSS = (
+    " table th{cursor:pointer;user-select:none}"
+    " table th::after{content:' ';opacity:.35;font-size:.75em}"
+    " table th[aria-sort=ascending]::after{content:' \\25B2';opacity:.9}"
+    " table th[aria-sort=descending]::after{content:' \\25BC';opacity:.9}"
+)
+SORT_SCRIPT = """
+<script>
+(function(){
+  function val(td){var s=td.getAttribute('data-sort');if(s===null){var el=td.querySelector('[data-sort]');if(el)s=el.getAttribute('data-sort');}return (s!==null?s:(td.textContent||'')).trim();}
+  function num(t){var m=t.replace(/\\u00a0/g,'').replace(/\\s+/g,'').replace(',','.').match(/-?\\d+(?:\\.\\d+)?/);return m?parseFloat(m[0]):null;}
+  function isEmpty(t){return t===''||t==='\\u2014'||t==='-';}
+  function sortTable(table,idx,asc){
+    var tb=table.tBodies[0]; if(!tb) return;
+    var rows=Array.prototype.slice.call(tb.rows);
+    var allNum=rows.every(function(r){var c=r.cells[idx];if(!c)return true;var v=val(c);return isEmpty(v)||num(v)!==null;});
+    rows.sort(function(a,b){
+      var av=a.cells[idx]?val(a.cells[idx]):'',bv=b.cells[idx]?val(b.cells[idx]):'';
+      var e1=isEmpty(av),e2=isEmpty(bv);
+      if(e1&&e2)return 0; if(e1)return 1; if(e2)return -1;
+      var r=allNum?((num(av)||0)-(num(bv)||0)):av.localeCompare(bv,'de',{numeric:true});
+      return asc?r:-r;
+    });
+    rows.forEach(function(r){tb.appendChild(r);});
+  }
+  document.querySelectorAll('table.sortable').forEach(function(table){
+    var head=table.tHead; if(!head||!head.rows.length) return;
+    Array.prototype.forEach.call(head.rows[0].cells,function(th,idx){
+      th.setAttribute('title','Klick: sortieren');
+      th.addEventListener('click',function(){
+        var asc=th.getAttribute('aria-sort')!=='ascending';
+        Array.prototype.forEach.call(head.rows[0].cells,function(o){o.removeAttribute('aria-sort');});
+        th.setAttribute('aria-sort',asc?'ascending':'descending');
+        sortTable(table,idx,asc);
+      });
+    });
+  });
+})();
+</script>
+"""
+
+
+def _load_dirs() -> dict:
+    """name→hf-dir aus image_models.yaml (stdlib-Regex, kein yaml-Dependency)."""
+    out: dict = {}
+    try:
+        lines = _CONFIG.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    name = None
+    for ln in lines:
+        g = re.match(r'\s*-\s*name:\s*"?([^"#\n]+?)"?\s*$', ln)
+        if g:
+            name = g.group(1).strip()
+            continue
+        d = re.match(r'\s*dir:\s*"?([^"#\s]+)"?', ln)
+        if d and name:
+            out[name] = d.group(1)
+            name = None
+    return out
+
+
+def _card_url(hf_dir: str) -> str:
+    """owner--model → https://huggingface.co/owner/model."""
+    return "https://huggingface.co/" + hf_dir.replace("--", "/", 1)
 
 
 def _make_thumb(src: Path, dst: Path, max_px: int = _THUMB_PX) -> bool:
@@ -58,18 +127,31 @@ def build_html(runs: list[dict], docs: Path) -> str:
     if img_root.exists():
         shutil.rmtree(img_root)
 
-    # Metrik-Übersicht
-    head = "".join(f"<th>{html.escape(r['summary']['model'])}</th>" for r in runs)
-    def row(label, key, suffix=""):
-        cells = "".join(f"<td>{_fmt(r['summary'].get(key), suffix)}</td>" for r in runs)
-        return f"<tr><th>{label}</th>{cells}</tr>"
-    metrics = "\n".join([
-        row("Bilder erzeugt", "generated"),
-        row("Ø Zeit/Bild", "gen_seconds_mean", " s"),
-        row("Textrendering CER (Ø)", "text_rendering_cer_mean"),
-        row("Textrendering exakt", "text_rendering_exact_rate"),
-        row("Prompt-Treue (Ø)", "adherence_score_mean"),
-    ])
+    dirs = _load_dirs()
+
+    def _mlabel(mdl: str) -> str:
+        d = dirs.get(mdl)
+        return (f'<a href="{_card_url(d)}" target="_blank" rel="noopener">{html.escape(mdl)}</a>'
+                if d else html.escape(mdl))
+
+    # Galerie-Header: Modelle als Spalten, Name → Model-Card verlinkt
+    head = "".join(f"<th>{_mlabel(r['summary']['model'])}</th>" for r in runs)
+
+    # Metrik-Übersicht: Modelle als ZEILEN (sortierbare Spalten), Name → Card
+    def _mcell(v, suffix="") -> str:
+        return f'<td data-sort="{"" if v is None else v}">{_fmt(v, suffix)}</td>'
+
+    def _mrow(r: dict) -> str:
+        s = r["summary"]; mdl = s["model"]
+        return ("<tr>"
+                f'<td data-sort="{html.escape(mdl)}" class="mname">{_mlabel(mdl)}</td>'
+                + _mcell(s.get("adherence_score_mean"))
+                + _mcell(s.get("text_rendering_cer_mean"))
+                + _mcell(s.get("text_rendering_exact_rate"))
+                + _mcell(s.get("gen_seconds_mean"), " s")
+                + _mcell(s.get("generated"))
+                + "</tr>")
+    metrics_rows = "\n".join(_mrow(r) for r in runs)
 
     # Galerie je Testfall
     case_ids: list[str] = []
@@ -142,18 +224,26 @@ def build_html(runs: list[dict], docs: Path) -> str:
  footer{{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--border);color:var(--text-muted);font-size:.85rem}}
  footer .wm{{font-family:var(--mono);font-weight:700;letter-spacing:1px;color:var(--text)}}
  footer .wm .dot{{color:var(--green)}}
+ table.metrics{{width:auto;max-width:100%;margin:1rem auto}}
+ table.metrics th.mname,table.metrics td.mname{{text-align:left;white-space:nowrap}}
+ .scroll{{overflow-x:auto;margin:1rem 0}}
+ .hint{{color:var(--text-muted);font-size:.78rem;margin:.1rem 0 0}}
+ {SORT_CSS}
 </style></head><body><div class="grid-bg"></div><div class="wrap">
 <header><div class="wordmark">SOUTH<span class="dot">.</span>BYTE</div>
 <div class="tagline">AI Governance &amp; IT-Beratung</div></header>
 <h1>Text-to-Image — Modellvergleich (DGX Spark / GB10)</h1>
 {empty}
 <h2>Metriken</h2>
-<table><tr><th>Metrik</th>{head}</tr>{metrics}</table>
+<div class="scroll"><table class="metrics sortable"><thead><tr>
+<th class="mname">Modell</th><th>Prompt-Treue</th><th>Text-CER</th><th>Text exakt</th><th>Ø Zeit/Bild</th><th>Bilder</th>
+</tr></thead><tbody>{metrics_rows}</tbody></table></div>
+<p class="hint">Spaltenüberschrift klicken zum Sortieren · Modellname → Model-Card</p>
 <h2>Galerie</h2>
-<table><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table>
+<div class="scroll"><table><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table></div>
 <footer><span class="wm">SOUTH<span class="dot">.</span>BYTE</span> — Michael van den Berg ·
 <a href="https://southbyte.de">southbyte.de</a></footer>
-</div></body></html>
+</div>{SORT_SCRIPT}</body></html>
 """
 
 
