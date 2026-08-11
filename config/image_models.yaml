@@ -4,7 +4,7 @@
 defaults:
   size: "1024x1024"
   dtype: bfloat16
-  image: "spark-southbyte-image:v2"   # 2026-08-11: v2 gebaut (flash-attn/mage_flow/nunchaku ok)
+  image: "spark-southbyte-image:v1"   # v2 gebaut (2026-08-11), aber kein v2-Modell aktiv → v1 für die 4 validen
 
 models:
   - name: FLUX.1-schnell
@@ -44,8 +44,9 @@ models:
     loader: mage_flow            # from mage_flow import MageFlowPipeline
     steps: 20
     guidance: 3.5
-    active: true
-    notes: "2026-08-11 aktiv (v2). ext. Lib github.com/microsoft/Mage; DiT nutzt flash-attn (2.7.4 aus Base-Image), Text-Encoder sdpa (VF_HF_ATTN_IMPL) + ImportError→sdpa-Fallback."
+    active: false
+    image: "spark-southbyte-image:v2"
+    notes: "PENDING 2026-08-11: v2-Image + _MageFlowAdapter (loaders.py) fertig, Modell LÄDT sauber. Blocker: mage_flows verpflichtende screen_text-Content-Gate ist FAIL-CLOSED und stuft JEDEN Prompt als violates=True ein (auch 'a red apple') → nur weiße Platzhalter. Interner Qwen3VL-Klassifikator (generate+JSON-parse) wirft Fehler → fail-closed. Fixbar (Screening in _vendor/mage_flow patchen/debuggen), aber zurückgestellt. Mirror von microsoft/Mage (MIT)."
 
   - name: FLUX.2-klein-9b
     dir: black-forest-labs--FLUX.2-klein-9b-nvfp4
@@ -53,8 +54,9 @@ models:
     components_dir: black-forest-labs--FLUX.2-dev-NVFP4
     steps: 8
     guidance: 4.0
-    active: true
-    notes: "2026-08-11 aktiv (v2). NVFP4 → nunchaku 0.16.1 im Image; Encoder+VAE aus components_dir"
+    active: false
+    image: "spark-southbyte-image:v2"
+    notes: "PENDING 2026-08-11: v2-Image + nunchaku 0.16.1 fertig. Blocker: components_dir FLUX.2-dev-NVFP4 enthält lokal NUR den Transformer (kein model_index.json/text_encoder/VAE/tokenizer) → Flux2Pipeline nicht offline assemblierbar (will black-forest-labs/FLUX.2-dev vom Hub). SYNC nötig: volle FLUX.2-dev-Pipeline-Komponenten nach ~/hf_models."
 
   - name: FLUX.2-klein-4b
     dir: black-forest-labs--FLUX.2-klein-4b-nvfp4
@@ -62,5 +64,6 @@ models:
     components_dir: black-forest-labs--FLUX.2-dev-NVFP4
     steps: 8
     guidance: 4.0
-    active: true
-    notes: "2026-08-11 aktiv (v2). NVFP4 4b-Variante; nunchaku 0.16.1"
+    active: false
+    image: "spark-southbyte-image:v2"
+    notes: "PENDING 2026-08-11: wie klein-9b — braucht die vollen FLUX.2-dev-Pipeline-Komponenten (text_encoder/VAE/tokenizer) lokal; aktuell nur Transformer-Weights gesynct."

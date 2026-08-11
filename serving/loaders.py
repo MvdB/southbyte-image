@@ -48,10 +48,44 @@ def _load_diffusion(model_path: str, dtype, opts: dict) -> Any:
         model_path, torch_dtype=dtype, local_files_only=True)
 
 
+class _MageFlowAdapter:
+    """diffusers-kompatible Hülle um MageFlowPipeline (2026-08-11).
+
+    MageFlowPipeline ist KEINE diffusers-Pipe: `from_pretrained(repo_dir, device='cuda')`
+    (kein torch_dtype), lädt schon auf cuda (kein `.to()`), und generiert via
+    `generate(prompts, steps=, cfg=, heights=, widths=, neg_prompts=, seeds=) -> [PIL]`.
+    Der Server erwartet aber `.to(device)` + `__call__(prompt=..., width, height,
+    num_inference_steps, guidance_scale, ...).images`. Diese Hülle übersetzt das.
+    """
+    def __init__(self, mage: Any):
+        self._mage = mage
+
+    def to(self, _device):  # mage_flow lädt in from_pretrained bereits auf cuda
+        return self
+
+    def __call__(self, prompt=None, negative_prompt=None, width=1024, height=1024,
+                 num_inference_steps=30, guidance_scale=5.0, num_images_per_prompt=1,
+                 generator=None, **_ignored):
+        n = int(num_images_per_prompt or 1)
+        prompts = [prompt] * n
+        kw: dict[str, Any] = dict(steps=int(num_inference_steps), cfg=float(guidance_scale),
+                                  heights=[int(height)] * n, widths=[int(width)] * n)
+        if negative_prompt:
+            kw["neg_prompts"] = [negative_prompt] * n
+        if generator is not None:  # Server reicht torch.Generator; mage will int-seeds
+            try:
+                kw["seeds"] = [int(generator.initial_seed()) % (2**32)] * n
+            except Exception:
+                pass
+        images = self._mage.generate(prompts, **kw)
+        return type("_Out", (), {"images": images})()
+
+
 def _load_mage_flow(model_path: str, dtype, opts: dict) -> Any:
     # Braucht das mage_flow-Paket (github.com/microsoft/Mage) im Image.
     from mage_flow import MageFlowPipeline  # type: ignore
-    return MageFlowPipeline.from_pretrained(model_path, torch_dtype=dtype)
+    mage = MageFlowPipeline.from_pretrained(model_path)  # device='cuda' default; kein torch_dtype
+    return _MageFlowAdapter(mage)
 
 
 def _load_flux2_singlefile(model_path: str, dtype, opts: dict) -> Any:
