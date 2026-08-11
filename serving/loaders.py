@@ -135,11 +135,39 @@ def _load_flux2_singlefile(model_path: str, dtype, opts: dict) -> Any:
         comp, transformer=transformer, torch_dtype=dtype, local_files_only=True)
 
 
+def _load_flux2_bnb(model_path: str, dtype, opts: dict) -> Any:
+    """FLUX.2-dev via bitsandbytes-NF4 (diffusers/FLUX.2-dev-bnb-4bit) + FLUX.2-dev-Komponenten.
+
+    Der funktionierende diffusers-native FLUX.2-Weg (2026-08-11): der NF4-Transformer liegt als
+    PROPER diffusers-Format im `transformer/`-Subfolder mit bnb-quantization_config in der
+    config.json → normales from_pretrained lädt ihn 4-bit (kein NVFP4-Single-File-Bruch). Die
+    restlichen Komponenten (text_encoder/VAE/scheduler/tokenizer) kommen aus COMPONENTS_DIR
+    (= black-forest-labs--FLUX.2-dev, voll gesynct).
+
+    opts:
+      COMPONENTS_DIR   Verzeichnis der vollen FLUX.2-dev-Pipeline (Name → /hf_models aufgelöst).
+      TRANSFORMER_SUBFOLDER  Subfolder des NF4-Transformers im bnb-Repo (Default 'transformer').
+    """
+    from diffusers import Flux2Pipeline, Flux2Transformer2DModel  # type: ignore
+    comp = opts.get("COMPONENTS_DIR")
+    if comp:
+        comp = str(Path(comp) if Path(comp).is_absolute() else Path(model_path).parent / comp)
+    else:
+        comp = model_path
+    sub = opts.get("TRANSFORMER_SUBFOLDER") or "transformer"
+    # bnb-quantization_config steht in <model_path>/<sub>/config.json → from_pretrained lädt 4-bit.
+    transformer = Flux2Transformer2DModel.from_pretrained(
+        model_path, subfolder=sub, torch_dtype=dtype, local_files_only=True)
+    return Flux2Pipeline.from_pretrained(
+        comp, transformer=transformer, torch_dtype=dtype, local_files_only=True)
+
+
 LOADERS: dict[str, Callable[[str, Any, dict], Any]] = {
     "auto": _load_auto,
     "diffusion": _load_diffusion,
     "mage_flow": _load_mage_flow,
     "flux2_singlefile": _load_flux2_singlefile,
+    "flux2_bnb": _load_flux2_bnb,
 }
 
 

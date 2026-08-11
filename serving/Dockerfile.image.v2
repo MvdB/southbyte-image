@@ -47,6 +47,10 @@ RUN pip install --no-cache-dir loguru einops pillow huggingface_hub \
 # Beide installieren, torchao zuerst (der kritische Pfad).
 RUN pip install --no-cache-dir torchao  || echo "WARN torchao nicht installiert"
 RUN pip install --no-cache-dir nunchaku || echo "WARN nunchaku nicht installiert"
+# 2026-08-11: bitsandbytes für die NF4-Variante (diffusers/FLUX.2-dev-bnb-4bit) — der
+# funktionierende diffusers-native FLUX.2-Weg (NVFP4-Single-File ist upstream noch kaputt).
+# Getestet: bnb 0.50 lädt auf sm_120/aarch64 (CUDA-13.2-Binary), 4bit-Roundtrip ok.
+RUN pip install --no-cache-dir bitsandbytes || echo "WARN bitsandbytes nicht installiert"
 
 # 2026-08-11: diffusers-ModelOpt-Quantizer-Fix. create_quantized_param baut nn.Parameter aus
 # den gepackten uint8-NVFP4-Weights OHNE requires_grad=False → RuntimeError ("Only Tensors of
