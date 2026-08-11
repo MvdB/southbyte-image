@@ -230,7 +230,10 @@ def build_html(runs: list[dict], docs: Path) -> str:
  .scroll{{overflow-x:auto;margin:1rem 0}}
  .hint{{color:var(--text-muted);font-size:.78rem;margin:.1rem 0 0}}
  {SORT_CSS}
-</style></head><body><div class="grid-bg"></div><div class="wrap">
+ @keyframes scanline{{0%{{transform:translateY(-100vh)}}100%{{transform:translateY(100vh)}}}}
+ .scanline{{position:fixed;left:0;top:0;width:100%;height:80px;background:linear-gradient(to bottom,transparent,rgba(0,230,118,.03) 40%,rgba(0,230,118,.07) 50%,rgba(0,230,118,.03) 60%,transparent);pointer-events:none;z-index:0;animation:scanline 8s linear infinite;will-change:transform}}
+ @media(prefers-reduced-motion:reduce){{.scanline{{display:none}}}}
+</style></head><body><div class="grid-bg"></div><div class="scanline"></div><div class="wrap">
 <header><div class="wordmark">SOUTH<span class="dot">.</span>BYTE</div>
 <div class="tagline">AI Governance &amp; IT-Beratung</div></header>
 <h1>Text-to-Image — Modellvergleich (DGX Spark / GB10)</h1>
