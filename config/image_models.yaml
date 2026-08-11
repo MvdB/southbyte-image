@@ -56,7 +56,7 @@ models:
     guidance: 4.0
     active: false
     image: "spark-southbyte-image:v2"
-    notes: "PENDING 2026-08-11: Komponenten (FLUX.2-dev) gesynct + Loader-Pfad/config-Fix ok, ABER NVFP4-Transformer laedt nicht: diffusers 0.38 Flux2Transformer2DModel.from_single_file konvertiert BFL->diffusers und crasht an den NVFP4-Quant-Scales (RuntimeError: chunk expects >=1-dim). Braucht nunchaku-FLUX2-Loader (0.16.1 exponiert keine FLUX2-Klassen) oder anderen NVFP4-Backend. Integration offen."
+    notes: "PENDING 2026-08-11: NVFP4-Transformer NICHT via diffusers ladbar — from_single_file-Konverter (convert_flux2_double_stream_blocks) crasht an den Quant-Scale-Tensoren (chunk expects >=1-dim), in diffusers 0.38 UND 0.39. torchao 0.18 + Komponenten (FLUX.2-dev voll) sind da, ändert nichts. Braucht anderen Runtime (ComfyUI/TensorRT-NVFP4-Loader) oder künftige diffusers-Unterstützung. FLUX.2-dev unquantisiert waere ~120GB → OOM-Risiko auf 121GB, nicht versucht."
 
   - name: FLUX.2-klein-4b
     dir: black-forest-labs--FLUX.2-klein-4b-nvfp4

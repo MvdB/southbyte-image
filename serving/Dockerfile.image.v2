@@ -40,9 +40,13 @@ RUN pip install --no-cache-dir loguru einops pillow huggingface_hub \
  && pip install --no-cache-dir --no-deps -e /opt/vendor/mage_flow || \
     echo "WARN mage_flow nicht installiert (Code fehlt im Build-Context?)"
 
-# ── ⚠️ NVFP4-Backend für FLUX.2-Single-File (nunchaku ODER torchao) ──
-RUN pip install --no-cache-dir nunchaku || pip install --no-cache-dir torchao || \
-    echo "WARN kein NVFP4-Backend — flux2_singlefile ggf. eingeschränkt"
+# ── NVFP4-Backend für FLUX.2-Single-File ──
+# 2026-08-11: torchao ist der von diffusers benötigte Deserializer — die FLUX.2-NVFP4-Checkpoints
+# sind torchao-serialisiert (sonst "Unable to import torchao Tensor objects" + Konverter-Crash
+# 'chunk expects >=1-dim'). Vorher schluckte 'nunchaku || torchao' das torchao (nunchaku gewann).
+# Beide installieren, torchao zuerst (der kritische Pfad).
+RUN pip install --no-cache-dir torchao  || echo "WARN torchao nicht installiert"
+RUN pip install --no-cache-dir nunchaku || echo "WARN nunchaku nicht installiert"
 
 # ── Server + Loader-Registry ──
 # 2026-08-11: serving/-Prefix — v2 baut mit Context=Repo-Root (nötig für COPY _vendor/mage_flow
