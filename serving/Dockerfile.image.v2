@@ -9,9 +9,12 @@ ENV HF_HUB_OFFLINE=1 \
     PYTHONUNBUFFERED=1
 
 # ── Basis (wie v1): diffusers 0.38 deckt FluxPipeline/QwenImage/Flux2/Ernie ab ──
+# 2026-08-11: transformers <5.6 PFLICHT für mage_flow — 5.6.0 entfernte den input_embeds-kwarg
+# von create_causal_mask, was mage_flows Qwen3VL-Encoder (Screening UND Konditionierung) crasht
+# (TypeError → screen_text fail-closed → alle Prompts blockiert). mage_flow pyproject: <5.6.
 RUN pip install --no-cache-dir \
       "diffusers==0.38.0" \
-      "transformers>=5.5" \
+      "transformers>=5.5,<5.6" \
       accelerate safetensors sentencepiece protobuf pyyaml \
       fastapi "uvicorn[standard]" pydantic
 

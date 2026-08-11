@@ -63,7 +63,8 @@ def wait_health(timeout: int = 900) -> bool:
     for _ in range(timeout // 5):
         try:
             with urllib.request.urlopen(url, timeout=5) as r:
-                if b'"status": "ok"' in r.read() or b'"status":"ok"' in r.read():
+                body = r.read()  # 2026-08-11: EINMAL lesen — vorher 2x r.read() → 2. Read leer,
+                if b'"status": "ok"' in body or b'"status":"ok"' in body:  # gesunder Server nie erkannt
                     return True
         except Exception:
             pass
