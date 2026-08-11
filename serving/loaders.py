@@ -97,14 +97,25 @@ def _load_flux2_singlefile(model_path: str, dtype, opts: dict) -> Any:
       TRANSFORMER_FILE  .safetensors des quantisierten Transformers (Default: erste im dir).
     """
     from diffusers import Flux2Pipeline, Flux2Transformer2DModel  # type: ignore
-    comp = opts.get("COMPONENTS_DIR") or model_path
+    # 2026-08-11: COMPONENTS_DIR kommt aus der Config als bloßer Verzeichnis-NAME
+    # (z.B. black-forest-labs--FLUX.2-dev). Relativ zum Modell-Store auflösen (Parent von
+    # model_path = /hf_models), sonst sucht from_pretrained im CWD/Hub → schlägt offline fehl.
+    comp = opts.get("COMPONENTS_DIR")
+    if comp:
+        comp = str(Path(comp) if Path(comp).is_absolute() else Path(model_path).parent / comp)
+    else:
+        comp = model_path
     tf_file = opts.get("TRANSFORMER_FILE")
     if not tf_file:
         cands = sorted(Path(model_path).glob("*.safetensors"))
         if not cands:
             raise RuntimeError(f"kein Single-File-Transformer in {model_path}")
         tf_file = str(cands[0])
-    transformer = Flux2Transformer2DModel.from_single_file(tf_file, torch_dtype=dtype)
+    # config= auf die lokale FLUX.2-dev/transformer-Config zeigen (Single-File-Checkpoint hat
+    # keine eigene config.json → sonst Hub-Fetch, offline-Fehler). local_files_only offline-safe.
+    _tf_cfg = str(Path(comp) / "transformer")
+    transformer = Flux2Transformer2DModel.from_single_file(
+        tf_file, config=_tf_cfg, local_files_only=True, torch_dtype=dtype)
     return Flux2Pipeline.from_pretrained(
         comp, transformer=transformer, torch_dtype=dtype, local_files_only=True)
 
