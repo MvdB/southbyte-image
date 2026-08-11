@@ -39,13 +39,21 @@ def judge_adherence(case: dict, png_bytes: bytes, endpoint: str, model: str) -> 
         "Bewerte das Bild gegen den Prompt und die Prüfpunkte."
     )
     try:
+        # 2026-08-11: 400→700 Tokens — bei langer begruendung wurde das JSON abgeschnitten
+        # (kein schließendes } → _extract_json scheitert → score:null, z.B. img-018).
         raw = chat_with_image(endpoint, model, user, png_bytes,
-                              system=_JUDGE_SYSTEM, max_tokens=400)
+                              system=_JUDGE_SYSTEM, max_tokens=700)
     except Exception as e:  # noqa: BLE001
         return {"score": None, "raw": None, "error": str(e)}
     parsed = _extract_json(raw)
     if not parsed or "score" not in parsed:
-        return {"score": None, "raw": raw, "error": "unparsebare Judge-Antwort"}
+        # Fallback für trotzdem abgeschnittene Antworten: "score" steht vor der begruendung,
+        # überlebt die Truncation → per Regex direkt aus dem raw ziehen.
+        m = re.search(r'"score"\s*:\s*([0-9]+(?:\.[0-9]+)?)', raw or "")
+        if m:
+            parsed = {"score": m.group(1)}
+        else:
+            return {"score": None, "raw": raw, "error": "unparsebare Judge-Antwort"}
     try:
         s5 = max(0.0, min(5.0, float(parsed["score"])))
     except (TypeError, ValueError):
