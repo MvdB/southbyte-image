@@ -140,6 +140,16 @@ def generate(req: GenRequest) -> dict[str, Any]:
     else:
         kwargs["guidance_scale"] = guidance
 
+    # Nur vom Pipeline-Call akzeptierte Argumente durchreichen: FLUX.2
+    # (guidance-distilled) kennt z.B. kein negative_prompt und wirft sonst
+    # TypeError → HTTP 500. Pipelines mit **kwargs bleiben unangetastet.
+    accepts_var_kw = any(p.kind == p.VAR_KEYWORD for p in sig_params.values())
+    if not accepts_var_kw:
+        dropped = [k for k in kwargs if k not in sig_params]
+        if dropped:
+            print(f"[warn] Pipeline akzeptiert nicht: {dropped} — verworfen", flush=True)
+        kwargs = {k: v for k, v in kwargs.items() if k in sig_params}
+
     t0 = time.perf_counter()
     with torch.inference_mode():
         out = _PIPE(**{k: v for k, v in kwargs.items() if v is not None})
