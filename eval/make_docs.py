@@ -19,6 +19,36 @@ _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parent
 _THUMB_PX = 360
 _CONFIG = _ROOT / "config" / "image_models.yaml"
+_MODELS_YAML = Path.home() / "southbyte/southbyte-vllm/testplan/config/models.yaml"
+
+
+def _load_models() -> dict:
+    """Release-Datum je Modell aus der zentralen models.yaml (name → release_date)."""
+    out: dict = {}
+    try:
+        lines = _MODELS_YAML.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    cur = None
+    for ln in lines:
+        m = re.match(r'\s*-\s*name:\s*"?([^"#\n]+?)"?\s*$', ln)
+        if m:
+            cur = {}
+            out[m.group(1).strip()] = cur
+            continue
+        f = re.match(r'\s+(release_date|license):\s*"?([^"#\n]+?)"?\s*$', ln)
+        if f and cur is not None:
+            cur[f.group(1)] = f.group(2).strip()
+    return out
+
+
+_MODELS = _load_models()
+
+
+def _rel_cell(name: str) -> str:
+    d = str(_MODELS.get(name or "", {}).get("release_date", "") or "")
+    m = re.match(r"(\d{4})-(\d{2})", d)
+    return f'<td data-sort="{m.group(1)}{m.group(2)}">{html.escape(d)}</td>' if m else '<td>—</td>'
 
 # Klick-Sortierung (wie southbyte-vllm/results): Header klicken → tbody-Zeilen sortieren.
 SORT_CSS = (
@@ -157,6 +187,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
         s = r["summary"]; mdl = s["model"]
         return ("<tr>"
                 f'<td data-sort="{html.escape(mdl)}" class="mname">{_mlabel(mdl)}</td>'
+                + _rel_cell(mdl)
                 + _mcell(s.get("adherence_score_mean"))
                 + _mcell(s.get("text_rendering_cer_mean"))
                 + _mcell(s.get("text_rendering_exact_rate"))
@@ -252,7 +283,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
 {empty}
 <h2>Metriken</h2>
 <div class="scroll"><table class="metrics sortable"><thead><tr>
-<th class="mname">Modell</th><th data-best="max">Prompt-Treue</th><th data-best="min">Text-CER</th><th data-best="max">Text exakt</th><th data-best="min">Ø Zeit/Bild</th><th>Bilder</th>
+<th class="mname">Modell</th><th>Release</th><th data-best="max">Prompt-Treue</th><th data-best="min">Text-CER</th><th data-best="max">Text exakt</th><th data-best="min">Ø Zeit/Bild</th><th>Bilder</th>
 </tr></thead><tbody>{metrics_rows}</tbody></table></div>
 <p class="hint">Spaltenüberschrift klicken zum Sortieren · Modellname → Model-Card</p>
 <h2>Galerie</h2>
