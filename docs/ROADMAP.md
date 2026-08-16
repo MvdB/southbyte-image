@@ -76,12 +76,20 @@ Serving-Adapter (diffusers) und die konkreten Bildmetriken/Testset.
 
 ## Phasen
 
-1. **Serving** — `server_image.py` + `Dockerfile.image` + `run_image.sh` + Profile
-   für die 3 Modelle; End-to-End-Erzeugung je Modell validieren. ⟵ *aktuell*
-2. **Testset** — deutsche Prompts inkl. Textrendering-Fälle + Schema.
-3. **Eval** — Prompt-Treue (CLIP + VLM-Judge) + OCR-Textrendering + Performance.
-4. **Feldvergleich** — 3 Modelle, `docs/`-Vergleichsseite publizieren.
-5. **Aufgeschoben** — VLM-Judge-Kalibrierung (Analog `judge_bench.py`), Bild-Moderation.
+1. **Serving** ✅ — `server_image.py` + `Dockerfile.image` + `run_image.sh` + Profile;
+   End-to-End-Erzeugung je Modell validiert.
+2. **Testset** ✅ — `testset/image_de_v1.jsonl`, 22 deutsche Fälle über fünf
+   Kategorien (Treue 6, Textrendering 6, Komposition 3, Stil 3, Fallen 4) + Schema.
+3. **Eval** ✅ — Prompt-Treue über VLM-Judge + Containment-CER fürs Textrendering +
+   Erzeugungsdauer. CLIP wurde nicht umgesetzt; der VLM-Judge deckt die Treue ab.
+4. **Feldvergleich** ✅ — sechs Modelle statt der ursprünglich geplanten drei,
+   Vergleichsseite publiziert unter <https://mvdb.github.io/southbyte-image/>.
+5. **Aufgeschoben** ⟵ *hier stehen wir* — VLM-Judge-Kalibrierung (analog
+   `judge_bench.py` in southbyte-tts), Bild-Moderation.
+
+Offen daneben, kein eigener Phasenschritt: der v2-Build ist nicht auf sm_120
+verifiziert, deshalb stehen die drei FLUX.2-NVFP4-Varianten in
+`config/image_models.yaml` weiter auf `active: false`.
 
 ---
 
