@@ -58,14 +58,23 @@ You need Docker with GPU access, the models in `~/hf_models/` (populated by
 only — a vision judge reachable over the network.
 
 **Scoring is not local.** Generation runs on your GPU; the adherence and OCR
-metrics call a vision model through an OpenAI-compatible endpoint. Set it before
-scoring, or run `--no-score` to generate only:
+metrics call a vision model through an OpenAI-compatible endpoint. Copy the
+template and fill it in — `.env` is gitignored:
+
+```bash
+cp .env.example .env
+```
 
 | Variable | |
 |---|---|
-| `JUDGE_ENDPOINT` | base URL of the judge (OpenAI-compatible `/v1/chat/completions`) |
-| `JUDGE_MODEL` | the model to ask |
+| `JUDGE_ENDPOINT` | base URL of the judge (OpenAI-compatible `/v1/chat/completions`). **No default** — there is deliberately no address baked into this repository |
+| `JUDGE_MODEL` | the model to ask, default `qwen/qwen3.7-plus` |
 | `VISION_API_KEY` | its key |
+
+Environment variables win over `.env`, so a one-off run needs no file at all.
+Without a judge configured the run stops **before** the first model starts rather
+than after the last one — a field run over six models takes hours, and scoring
+happens at the end of each. `--no-score` generates without any of this.
 
 Mage-Flow and the FLUX.2 NVFP4 loaders need the larger image instead:
 `docker build -t spark-southbyte-image:v2 -f serving/Dockerfile.image.v2 .`

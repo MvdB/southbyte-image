@@ -3,9 +3,13 @@
 # scoren: Adherence (Prompt-Treue) + OCR (Textrendering-CER). Dann Seite + Hub.
 set -u
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
-IMG=/home/mvdb/southbyte/southbyte-image
-RESULTS=/home/mvdb/southbyte/southbyte-results
-TPENV=/home/mvdb/southbyte/southbyte-vllm/testplan/.env
+# Pfade nicht fest verdrahten: Repo relativ zu diesem Skript, die
+# Geschwister-Repos daneben. Ueberschreibbar, falls die Ablage abweicht.
+IMG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RESULTS="${SOUTHBYTE_RESULTS:-$(dirname "$IMG")/southbyte-results}"
+# Judge-Adresse und Schluessel kommen aus der gitignorierten .env, nicht aus
+# diesem Skript — es liegt in einem oeffentlichen Repository.
+set -a; . "$IMG/.env" 2>/dev/null; set +a
 CO='Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_019YpS7jJGxYt9cD5nRMS7fH'
 SL=$IMG/results/score_all.log
@@ -18,11 +22,14 @@ $CO" 2>/dev/null && log "commit: $msg" || log "nichts zu committen ($repo)"
   git pull --rebase origin main >/dev/null 2>&1 || true
   git push origin main 2>&1 | tail -1 | tee -a "$SL"; }
 
-set -a; . "$TPENV" 2>/dev/null; set +a
-export VISION_API_KEY="$JUDGE_API_KEY"
-export VISION_MAX_TOKENS=2048
-JE=http://10.0.0.6:4000
-JM=qwen/qwen3.7-plus
+export VISION_API_KEY="${VISION_API_KEY:-${JUDGE_API_KEY:-}}"
+export VISION_MAX_TOKENS="${VISION_MAX_TOKENS:-2048}"
+JE="${JUDGE_ENDPOINT:-}"
+JM="${JUDGE_MODEL:-qwen/qwen3.7-plus}"
+if [ -z "$JE" ]; then
+  echo "JUDGE_ENDPOINT fehlt — $IMG/.env anlegen (Vorlage: .env.example)." >&2
+  exit 2
+fi
 cd "$IMG"
 log "=== SCORE-ALL START (Judge+OCR=$JM) ==="
 for m in FLUX.1-schnell Qwen-Image-2512 Qwen-Image-Flash ERNIE-Image-Turbo; do

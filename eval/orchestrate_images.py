@@ -10,9 +10,17 @@ baut am Ende die Vergleichsseite. Läuft auf der Serving-Box (lokales Docker).
   python eval/orchestrate_images.py --models ERNIE-Image-Turbo,FLUX.1-schnell
   python eval/orchestrate_images.py --no-score           # nur generieren (Phase 1)
 
-Judge/OCR über Env (wie score_all.sh):
-  VISION_API_KEY, JUDGE_ENDPOINT (Default http://10.0.0.6:4000), JUDGE_MODEL
-  (Default qwen/qwen3.7-plus), VISION_MAX_TOKENS.
+Judge und OCR laufen NICHT lokal — sie brauchen einen OpenAI-kompatiblen
+Endpunkt. Konfiguriert wird er über die Umgebung oder eine `.env` neben dieser
+Datei im Repo-Wurzelverzeichnis (`.env.example` als Vorlage, `.env` ist
+gitignoriert):
+
+  JUDGE_ENDPOINT     Basis-URL des Judge. Kein Standardwert — bewusst.
+  JUDGE_MODEL        Modell dort (Standard qwen/qwen3.7-plus)
+  VISION_API_KEY     Schlüssel dafür
+  VISION_MAX_TOKENS  optional
+
+Ohne JUDGE_ENDPOINT bricht nur die Bewertung ab; `--no-score` läuft weiter.
 """
 from __future__ import annotations
 
@@ -27,11 +35,42 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+def env_datei_laden(pfad: Path) -> None:
+    """Liest eine `.env` nach os.environ — ohne bereits Gesetztes zu überschreiben.
+
+    Warum überhaupt: Die Adresse des Judge ist Betriebswissen und stand vorher als
+    Standardwert im Code — in einem oeffentlichen Repository also eine private
+    Netzadresse für jeden lesbar, und für jeden, der klont, ein Vorgabewert, der
+    ins Leere zeigt. Die Datei ist gitignoriert; `.env.example` zeigt die Form.
+
+    Bewusst kein python-dotenv: Das Repo kommt mit der Standardbibliothek aus, und
+    eine Abhaengigkeit für zwoelf Zeilen lohnt nicht. Entsprechend eng ist der
+    Parser — KEY=WERT je Zeile, `#` als Kommentar, umschliessende Anfuehrungszeichen
+    werden entfernt. Kein Zeilenumbruch im Wert, keine Ersetzung von Variablen.
+    """
+    if not pfad.is_file():
+        return
+    for zeile in pfad.read_text(encoding="utf-8").splitlines():
+        zeile = zeile.strip()
+        if not zeile or zeile.startswith("#") or "=" not in zeile:
+            continue
+        schluessel, _, wert = zeile.partition("=")
+        schluessel = schluessel.strip().removeprefix("export ").strip()
+        os.environ.setdefault(schluessel, wert.strip().strip("'\""))
+
+
+env_datei_laden(REPO / ".env")
+
 PROFILES = Path(os.environ.get("SPARK_PROFILES_DIR",
                                Path.home() / "southbyte/southbyte-spark-profiles")) / "image"
 HOST_PORT = os.environ.get("IMG_HOST_PORT", "8010")
 CONTAINER = os.environ.get("IMG_CONTAINER", "southbyte-image")
-JUDGE_ENDPOINT = os.environ.get("JUDGE_ENDPOINT", "http://10.0.0.6:4000")
+# Kein Standardwert: Der Judge steht auf einer anderen Maschine, und welche das
+# ist, gehoert nicht in ein oeffentliches Repository. Fehlt der Wert, scheitert
+# nur die Bewertung — und zwar mit einer Ansage, nicht mit einer Zeitueberschreitung.
+JUDGE_ENDPOINT = os.environ.get("JUDGE_ENDPOINT", "")
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "qwen/qwen3.7-plus")
 
 
@@ -114,6 +153,22 @@ def main() -> int:
         models = [m for m in models if m["name"] in want]
     else:
         models = [m for m in models if m.get("active")]
+
+    # Vor dem ersten Modell pruefen, nicht nach dem letzten: Ein Feldlauf ueber
+    # sechs Modelle laeuft Stunden, und die Bewertung kommt je Modell ganz am
+    # Ende. Ohne diesen Riegel faellt eine fehlende Konfiguration erst auf,
+    # nachdem die erste GPU-Stunde verbrannt ist.
+    if not args.no_score and not JUDGE_ENDPOINT:
+        print(
+            "JUDGE_ENDPOINT ist nicht gesetzt — die Bewertung braucht einen\n"
+            "OpenAI-kompatiblen Endpunkt und laeuft nicht lokal.\n\n"
+            f"  cp {REPO}/.env.example {REPO}/.env   und dort eintragen\n"
+            "  oder: JUDGE_ENDPOINT=... python eval/orchestrate_images.py\n\n"
+            "Nur erzeugen, ohne zu bewerten: --no-score",
+            file=sys.stderr,
+        )
+        return 2
+
     log(f"═══ Feldlauf: {len(models)} Modelle ═══")
     for m in models:
         run_model(m, defaults, score=not args.no_score)
