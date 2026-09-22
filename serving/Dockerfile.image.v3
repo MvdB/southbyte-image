@@ -1,0 +1,36 @@
+# southbyte-image Serving-Container v3 — NUR fuer Qwen-Image-2.1 (2026-09-22).
+#
+# Warum ein drittes Image statt v2 zu erweitern: Qwen-Image-2.1 verlangt
+# QwenImage21Pipeline (diffusers) und transformers >=5.17. Die Klasse steckt in
+# KEINEM Release — auch 0.40.0 nicht —, sondern erst im Hauptzweig seit
+# 2026-09-18 (PR #14804, "Add Qwen-Image 2.1"). Und transformers >=5.17 ist mit
+# v2 unvereinbar: dort gilt <5.6, weil 5.6 den input_embeds-kwarg von
+# create_causal_mask entfernt hat und mage_flow daran crasht. Mage-Flow bleibt
+# deshalb auf v2; die Registry waehlt das Image je Modell.
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONUNBUFFERED=1
+
+# diffusers auf den Commit gepinnt, der Qwen-Image 2.1 eingefuehrt hat — ein
+# beweglicher Hauptzweig waere nicht reproduzierbar.
+RUN pip install --no-cache-dir \
+      "git+https://github.com/huggingface/diffusers@6256aa7666ce" \
+      "transformers==5.17.0" \
+      accelerate safetensors sentencepiece protobuf pyyaml \
+      fastapi "uvicorn[standard]" pydantic
+
+# Beleg im Image selbst: fehlt die Klasse, soll der Build scheitern und nicht
+# erst der Lauf.
+RUN python -c "import diffusers, transformers; \
+assert hasattr(diffusers, 'QwenImage21Pipeline'), 'QwenImage21Pipeline fehlt'; \
+assert hasattr(diffusers, 'QwenImage21Transformer2DModel'), 'Transformer fehlt'; \
+assert hasattr(diffusers, 'AutoencoderKLQwenImage21'), 'VAE fehlt'; \
+print('v3 ok: diffusers', diffusers.__version__, 'transformers', transformers.__version__)"
+
+COPY serving/server_image.py serving/loaders.py /opt/southbyte-image/
+WORKDIR /opt/southbyte-image
+
+EXPOSE 8010
+CMD ["python", "server_image.py"]

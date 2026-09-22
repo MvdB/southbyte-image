@@ -44,6 +44,33 @@ def _load_models() -> dict:
 
 _MODELS = _load_models()
 
+# Lizenzen, die eine kommerzielle Nutzung ausschliessen. Ein Modell mit so einer
+# Lizenz bekommt auf der Seite einen sichtbaren Hinweis — die gezeigten Bilder
+# sind seine Ausgaben, und die Einschraenkung gilt fuer sie mit.
+_NICHT_KOMMERZIELL = {
+    "qwen-research": ("Qwen Research License", "https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE"),
+    "flux-2-dev-non-commercial": ("FLUX.2-dev Non-Commercial License",
+                                  "https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md"),
+}
+
+
+def _lizenz_hinweis(namen: list[str]) -> str:
+    """Hinweisblock fuer alle gezeigten Modelle mit nicht-kommerzieller Lizenz."""
+    betroffen = []
+    for n in namen:
+        lic = str(_MODELS.get(n, {}).get("license", "") or "")
+        if lic in _NICHT_KOMMERZIELL:
+            bez, url = _NICHT_KOMMERZIELL[lic]
+            betroffen.append(f'<strong>{html.escape(n)}</strong> — <a href="{url}" target="_blank" '
+                             f'rel="noopener">{html.escape(bez)}</a>')
+    if not betroffen:
+        return ""
+    return ('<p class="hint lizenz"><strong>Nicht-kommerzielle Lizenzen:</strong> '
+            + " · ".join(betroffen)
+            + '. Diese Modelle duerfen nur zu Forschungs- und Evaluationszwecken genutzt werden; '
+              'die hier gezeigten Bilder sind im Rahmen dieser Evaluation entstanden. Wer sie '
+              'kommerziell nutzen will, braucht eine eigene Lizenz des Anbieters.</p>')
+
 
 def _rel_cell(name: str) -> str:
     d = str(_MODELS.get(name or "", {}).get("release_date", "") or "")
@@ -178,6 +205,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
 
     # Galerie-Header: Modelle als Spalten, Name → Model-Card verlinkt
     head = "".join(f"<th>{_mlabel(r['summary']['model'])}</th>" for r in runs)
+    lizenz_hinweis = _lizenz_hinweis([r["summary"]["model"] for r in runs])
 
     # Metrik-Übersicht: Modelle als ZEILEN (sortierbare Spalten), Name → Card
     def _mcell(v, suffix="") -> str:
@@ -286,6 +314,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
 <th class="mname">Modell</th><th>Release</th><th data-best="max">Prompt-Treue</th><th data-best="min">Text-CER</th><th data-best="max">Text exakt</th><th data-best="min">Ø Zeit/Bild</th><th>Bilder</th>
 </tr></thead><tbody>{metrics_rows}</tbody></table></div>
 <p class="hint">Spaltenüberschrift klicken zum Sortieren · Modellname → Model-Card</p>
+{lizenz_hinweis}
 <h2>Galerie</h2>
 <div class="scroll"><table><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table></div>
 <footer><span class="wm">SOUTH<span class="dot">.</span>BYTE</span> — Michael van den Berg ·
