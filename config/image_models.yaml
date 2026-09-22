@@ -30,6 +30,17 @@ models:
     active: true
     notes: "Sweet Spot Durchsatz/Qualität"
 
+  - name: Qwen-Image-2.1
+    dir: Qwen--Qwen-Image-2.1
+    loader: diffusion            # QwenImage21Pipeline steht NICHT im AutoPipeline-Mapping
+                                 # (geprueft 22.09.), nur DiffusionPipeline liest _class_name
+    steps: 40                    # Modellkarte
+    guidance: 3.5
+    size: "1024x1024"            # Kohorten-Aufloesung; die Karte nennt nur 2048er-Formate
+    active: true
+    image: "spark-southbyte-image:v3"
+    notes: "Braucht v3: QwenImage21Pipeline steckt in keinem diffusers-Release (auch 0.40.0 nicht), erst im Hauptzweig seit 2026-09-18 (PR #14804); dazu transformers >=5.17, was mit dem <5.6-Pin von Mage-Flow unvereinbar ist. Deshalb eigenes Image, Mage-Flow bleibt auf v2. Gemessen bei 1024x1024 wie die uebrige Kohorte — die Modellkarte nennt als Formate nur 2048er-Kantenlaengen, dazu gibt es einen Seitenlauf ueber 5 Faelle. LIZENZ: Qwen Research License (nicht apache-2.0 wie 2512) — Nutzung nur zu Forschungs- und Evaluationszwecken, kommerziell nur mit eigener Lizenz von Qwen. Gilt auch fuer die erzeugten Bilder; Veroeffentlichung der Messbilder am 22.09.2026 bewusst entschieden, Hinweis steht auf der Vergleichsseite."
+
   - name: ERNIE-Image-Turbo
     dir: baidu--ERNIE-Image-Turbo
     loader: diffusion            # ErnieImagePipeline (Custom-Klasse in diffusers 0.38)
