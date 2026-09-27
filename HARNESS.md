@@ -7,13 +7,35 @@ Ein Modell hinzufügen = **Profil/Config-Eintrag + Loader-Namen** — kein Code.
 
 | # | Teil | Datei |
 |---|------|-------|
-| ① | Serving-Image (alle Deps) | `serving/Dockerfile.image` (v1) · `serving/Dockerfile.image.v2` (+ flash-attn/mage_flow/nunchaku) · `serving/Dockerfile.image.v3` (Qwen-Image-2.1) |
+| ① | Serving-Image (alle Deps) | `serving/Dockerfile.image` (v1) · `.v2` (+ mage_flow/nunchaku/bnb) · `.v2.1` (= v2 + aktueller Servercode) · `.v3` (Qwen-Image-2.1) |
 | ② | Loader-Registry | `serving/loaders.py` |
 | ③ | Serving-Adapter (OpenAI-Images-API) | `serving/server_image.py` · Start: `serving/run_image.sh` |
 | ③ | Profile (pro Modell) | `southbyte-spark-profiles/image/<dir>/image_profile.conf` |
 | ④ | Orchestrator (Feldlauf + Scoring) | `eval/orchestrate_images.py` · Registry: `config/image_models.yaml` |
 | ④ | Metriken | `eval/metrics/adherence.py` (Treue) · `eval/metrics/ocr_text.py` (Text-CER, containment) |
 | ④ | Vergleichsseite | `eval/make_docs.py` |
+
+## Testsatz: v1 und v2 sind nicht vergleichbar
+
+`testset/image_de_v2.jsonl` (seit 2026-09-22) ist v1 plus **einen generischen
+Negativ-Prompt je Fall**. Grund: `true_cfg_scale` schaltet bei den
+Qwen-Pipelines erst mit Negativ-Prompt echte CFG ein, und in v1 hatte genau
+1 von 22 Faellen einen — die Guidance war dort also wirkungslos, waehrend FLUX
+und ERNIE ihren `guidance_scale` anwenden.
+
+Der Text ist fuer alle Faelle derselbe. Auf die Pruefkriterien hin formulierte
+Negativ-Prompts wuerden die Testdaten messen statt das Modell.
+
+`summary.json` schreibt den Testsatz mit (`"testset"`), und **Zahlen aus v1 und
+v2 gehoeren nicht in dieselbe Tabelle** — weder die Qualitaet noch die Zeiten.
+Bei der Umstellung wechselte fuer vier Modelle auch das Image, deshalb sind die
+Zeiten doppelt unvergleichbar (ERNIE 122 → 51 s/Bild allein durch das Image).
+
+**Rauschmass:** FLUX.1-schnell und FLUX.2-dev bekommen den Negativ-Prompt
+gar nicht (guidance-distilliert, der Server verwirft ihn). Ihre Differenz
+zwischen zwei Laeufen — 2026-09-27 **+0,055** und **−0,009** in der
+Prompt-Treue — ist die Schwelle, ab der eine Aenderung bei den anderen
+ueberhaupt etwas bedeutet.
 
 ## Warum drei Images
 
@@ -26,9 +48,28 @@ transformers >=5.17, und das schliesst sich mit v2 aus: dort gilt `<5.6`, weil
 mage_flow daran crasht. Mage-Flow bleibt auf v2, die Registry waehlt das Image
 je Modell (`image:`).
 
-**Das v1-Image liegt seit 22.09. nicht mehr lokal vor.** Die vier Modelle, die
-darauf zeigen, sind gemessen und veroeffentlicht; ein erneuter Lauf mit ihnen
-braucht vorher einen Neubau.
+**Das v1-Image liegt seit 22.09. nicht mehr lokal vor.** Seit 27.09. steht in
+den defaults deshalb v2: laut Aufbau ist es die Obermenge von v1 (gleiche
+diffusers-Basis plus die schweren Deps), und mit FLUX.1-schnell verifiziert.
+
+**v2.1 = v2 plus die zwei aktuellen Python-Dateien, sonst nichts.** Am 27.09.
+scheiterten alle 22 FLUX.2-Faelle mit
+`Flux2Pipeline.__call__() got an unexpected keyword argument 'negative_prompt'`.
+Ursache war nicht der Code, sondern das Image: **v2 (gebaut 11.08.) trug eine
+alte `server_image.py` ohne den Fix, der nicht unterstuetzte Argumente
+verwirft** — der Fix stand seit 11.08. im Repo (Commit 49b0160), war aber nie
+ausgeliefert. Im August fiel das nicht auf, weil nur ein einziger Fall einen
+Negativ-Prompt trug. Ein voller Neubau von v2 wuerde torchao/nunchaku/
+bitsandbytes unpinned neu ziehen und damit die empfindliche FLUX.2-Kette
+anfassen; der Aufsatz tauscht nur `server_image.py` und `loaders.py`.
+
+**Lehre:** nach einer Aenderung an `serving/` gehoert das Image neu gebaut,
+sonst laeuft der Fix nur im Repo. Pruefen laesst sich das in einer Zeile:
+
+```bash
+docker exec southbyte-image md5sum /opt/southbyte-image/server_image.py
+md5sum serving/server_image.py
+```
 
 ## Loader-Strategien (`PROFILE_LOADER` → `IMG_LOADER`)
 
@@ -80,6 +121,13 @@ Beim Nachtragen in `models.yaml`: **kein Kommentar hinter dem Wert.** Die
 Parser in `eval/make_docs.py` und `southbyte-results/feeds.py` lesen die Zeile
 mit einem regulaeren Ausdruck, der an `#` abbricht — die Lizenz erscheint dann
 als „—" auf der Seite.
+
+## Ein Lauf ohne Bild ist ein Fehler
+
+`orchestrate_images.py` prueft seit 27.09. nach jedem Modell, ob ueberhaupt ein
+Bild entstanden ist, und endet sonst mit rc=1. Vorher meldete der Feldlauf
+rc=0, obwohl alle 22 Faelle mit HTTP 500 gescheitert waren — der Fehllauf sah
+von aussen aus wie ein Erfolg.
 
 ## Scoring
 

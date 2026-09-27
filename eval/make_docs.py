@@ -206,6 +206,17 @@ def build_html(runs: list[dict], docs: Path) -> str:
     # Galerie-Header: Modelle als Spalten, Name → Model-Card verlinkt
     head = "".join(f"<th>{_mlabel(r['summary']['model'])}</th>" for r in runs)
     lizenz_hinweis = _lizenz_hinweis([r["summary"]["model"] for r in runs])
+    # Welcher Testsatz gemessen wurde, gehoert auf die Seite: v1 und v2 sind
+    # nicht vergleichbar (v2 traegt Negativ-Prompts), und ohne die Angabe
+    # stuenden Zahlen zweier Staende ununterscheidbar nebeneinander.
+    saetze = sorted({r["summary"].get("testset") or "unbekannt" for r in runs})
+    testsatz_hinweis = (
+        f'<p class="hint">Testsatz <code>{html.escape(saetze[0])}</code> · '
+        '22 Fälle, deutsch · mit Negativ-Prompt je Fall</p>'
+        if len(saetze) == 1 and saetze[0].endswith("v2") else
+        f'<p class="hint lizenz"><strong>Achtung:</strong> gemischte Testsätze '
+        f'({html.escape(", ".join(saetze))}) — diese Zahlen sind nicht '
+        'untereinander vergleichbar.</p>')
 
     # Metrik-Übersicht: Modelle als ZEILEN (sortierbare Spalten), Name → Card
     def _mcell(v, suffix="") -> str:
@@ -314,6 +325,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
 <th class="mname">Modell</th><th>Release</th><th data-best="max">Prompt-Treue</th><th data-best="min">Text-CER</th><th data-best="max">Text exakt</th><th data-best="min">Ø Zeit/Bild</th><th>Bilder</th>
 </tr></thead><tbody>{metrics_rows}</tbody></table></div>
 <p class="hint">Spaltenüberschrift klicken zum Sortieren · Modellname → Model-Card</p>
+{testsatz_hinweis}
 {lizenz_hinweis}
 <h2>Galerie</h2>
 <div class="scroll"><table><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table></div>
