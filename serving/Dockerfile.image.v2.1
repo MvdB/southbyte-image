@@ -1,0 +1,20 @@
+# southbyte-image v2.1 — v2 mit dem aktuellen Serving-Code (2026-09-27).
+#
+# Warum ein Aufsatz statt eines Neubaus: das v2-Image vom 11.08. trug eine
+# ALTE server_image.py. Der Fix "nur vom Pipeline-Call akzeptierte Argumente
+# durchreichen" (Commit 49b0160, ebenfalls 11.08.) stand seither im Repo, war
+# aber nie ausgeliefert. Aufgefallen ist das erst am 27.09. mit Testsatz v2:
+# seit dort JEDER Fall einen Negativ-Prompt traegt, scheiterten alle 22
+# FLUX.2-Faelle mit "Flux2Pipeline.__call__() got an unexpected keyword
+# argument 'negative_prompt'" — im August hatte nur ein Fall einen.
+#
+# Ein voller Neubau von v2 wuerde torchao/nunchaku/bitsandbytes unpinned neu
+# ziehen und damit die empfindliche FLUX.2-Kette anfassen. Dieser Aufsatz
+# tauscht nur die zwei Python-Dateien; alles andere bleibt Byte fuer Byte das
+# geprueft laufende v2.
+FROM spark-southbyte-image:v2
+
+COPY serving/server_image.py serving/loaders.py /opt/southbyte-image/
+
+RUN grep -q 'accepts_var_kw' /opt/southbyte-image/server_image.py \
+ && echo "v2.1 ok: Verwerf-Logik enthalten"

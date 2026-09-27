@@ -102,5 +102,5 @@ models:
     steps: 20
     guidance: 4.0
     active: true                            # nach Sync + Smoke aktivieren
-    image: "spark-southbyte-image:v2"
+    image: "spark-southbyte-image:v2.1"   # v2 trug eine alte server_image.py (27.09.)
     notes: "2026-08-11: diffusers-nativer FLUX.2-dev-Weg (bitsandbytes-NF4, diffusers/FLUX.2-dev-bnb-4bit). Transformer als PROPER diffusers-Format im transformer/-Subfolder → normales from_pretrained lädt 4-bit (keine NVFP4-Single-File-Brüche). bnb 0.50 läuft auf sm_120 (getestet). WARTET auf Sync des Repos nach ~/hf_models."

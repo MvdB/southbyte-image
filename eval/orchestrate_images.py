@@ -25,6 +25,7 @@ Ohne JUDGE_ENDPOINT bricht nur die Bewertung ab; `--no-score` läuft weiter.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -116,6 +117,26 @@ def wait_health(timeout: int = 900) -> bool:
     return False
 
 
+def lauf_leer(m: dict) -> bool:
+    """True, wenn der juengste Lauf dieses Modells kein einziges Bild hat.
+
+    Am 27.09.2026 scheiterten alle 22 FLUX.2-Faelle mit HTTP 500 (das v2-Image
+    trug eine alte server_image.py), und der Orchestrator endete trotzdem mit
+    rc=0 — der Fehllauf sah von aussen aus wie ein Erfolg. Ein Lauf ohne ein
+    einziges Bild ist keiner.
+    """
+    kandidaten = sorted((REPO / "results").glob(f"*_{m['name']}"))
+    if not kandidaten:
+        return True
+    sj = kandidaten[-1] / "summary.json"
+    if not sj.exists():
+        return True
+    try:
+        return int(json.loads(sj.read_text(encoding="utf-8")).get("generated", 0)) == 0
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return True
+
+
 def run_model(m: dict, defaults: dict, score: bool) -> None:
     log(f"── {m['name']} ({m['dir']}, loader={m.get('loader','auto')}) ──")
     write_profile(m, defaults)
@@ -172,11 +193,18 @@ def main() -> int:
         return 2
 
     log(f"═══ Feldlauf: {len(models)} Modelle ═══")
+    leer = []
     for m in models:
         run_model(m, defaults, score=not args.no_score)
+        if lauf_leer(m):
+            log(f"FEHLER {m['name']}: kein einziges Bild erzeugt")
+            leer.append(m["name"])
     log("── Vergleichsseite bauen ──")
     subprocess.run([sys.executable, str(REPO / "eval/make_docs.py")])
     log("═══ Feldlauf Ende ═══")
+    if leer:
+        print(f"Ohne Ergebnis geblieben: {', '.join(leer)}", file=sys.stderr)
+        return 1
     return 0
 
 
