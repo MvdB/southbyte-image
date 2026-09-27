@@ -127,6 +127,10 @@ def summarize(records: list[dict], run_dir: Path, args) -> dict:
            if r.get("adherence", {}).get("score") is not None]
     summary = {
         "model": args.model_name,
+        # Herkunft mitschreiben: seit Testsatz v2 (Negativ-Prompts, 2026-09-22)
+        # sind Zahlen aus verschiedenen Testsaetzen nicht vergleichbar, und ohne
+        # diesen Eintrag sieht man einem Lauf nicht an, welcher es war.
+        "testset": Path(args.testset).stem,
         "cases": len({r["id"] for r in records}),
         "generated": sum(1 for r in records if r.get("image")),
         "failed": sum(1 for r in records if r.get("error")),

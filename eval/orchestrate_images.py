@@ -129,8 +129,10 @@ def run_model(m: dict, defaults: dict, score: bool) -> None:
         subprocess.run(["docker", "logs", "--tail", "8", CONTAINER])
         subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True); return
 
+    testset = m.get("testset", defaults.get("testset", "testset/image_de_v1.jsonl"))
     cmd = [sys.executable, str(REPO / "eval/image_eval.py"),
-           "--endpoint", f"http://localhost:{HOST_PORT}", "--model-name", m["name"]]
+           "--endpoint", f"http://localhost:{HOST_PORT}", "--model-name", m["name"],
+           "--testset", str(REPO / testset)]
     if score:
         cmd += ["--judge-endpoint", JUDGE_ENDPOINT, "--judge-model", JUDGE_MODEL,
                 "--ocr-endpoint", JUDGE_ENDPOINT, "--ocr-model", JUDGE_MODEL]

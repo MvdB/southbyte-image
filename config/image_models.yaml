@@ -4,7 +4,13 @@
 defaults:
   size: "1024x1024"
   dtype: bfloat16
-  image: "spark-southbyte-image:v1"   # v2 gebaut (2026-08-11), aber kein v2-Modell aktiv → v1 für die 4 validen
+  # Testsatz v2 seit 2026-09-22: wie v1, aber mit Negativ-Prompt je Fall. Ohne
+  # ihn bleibt true_cfg_scale bei den Qwen-Pipelines wirkungslos. Zahlen aus v1
+  # und v2 sind NICHT vergleichbar — der Testsatz steht deshalb in summary.json.
+  testset: "testset/image_de_v2.jsonl"
+  # v2 statt v1: das v1-Image liegt seit 22.09. nicht mehr lokal, und v2 ist
+  # laut HARNESS seine Obermenge (gleiche diffusers-Basis plus schwere Deps).
+  image: "spark-southbyte-image:v2"
 
 models:
   - name: FLUX.1-schnell
