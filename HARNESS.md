@@ -107,6 +107,46 @@ FLUX und ERNIE ihren Wert anwenden. Das ist kein Fehler eines einzelnen Laufs,
 aber ein Unterschied, der beim Vergleich der Zahlen mitzudenken ist
 (festgestellt 2026-09-22).
 
+## EU-Kennzeichnung KI-erzeugter Inhalte
+
+Jedes Bild in `docs/img/` traegt das Icon der Europaeischen Kommission
+(Variante **AI GENERATED**), unten links. Der Seitenbau macht das selbst —
+**kein manueller Zwischenschritt**, und `make_docs.py` endet mit rc=1, wenn
+auch nur ein Bild ungekennzeichnet veroeffentlicht wuerde.
+
+**Nur auf den veroeffentlichten Kopien, nie auf den gemessenen Bildern.** Das
+ist keine Bequemlichkeit, sondern Pflicht: unsere Bewertung laeuft ueber ein
+Bildmodell als Judge und misst gerenderten Text per OCR. Ein eingebranntes
+Label mit den Woertern "AI GENERATED" liefe in die Text-CER und in die
+Prompt-Treue — wir wuerden unser eigenes Wasserzeichen mitmessen. `results/`
+bleibt die Beweisebene, `docs/img/` ist die Veroeffentlichung.
+
+**Position unten links**, weil unsere Szenen das Motiv meist mittig bis oben
+tragen und Provenienzangaben konventionell unten gesucht werden. Die Vorgabe
+der Kommission ("bei erstem Kontakt klar wahrnehmbar, sichtbar auch beim
+Weiterteilen oder Herunterladen") ist erfuellt, weil das Label IM Bild steckt
+und nicht nur in der Seite drumherum. Das Raster-Thumbnail wird aus der
+gekennzeichneten Kopie gezogen, traegt es also ebenfalls.
+
+**Schwarz oder weiss entscheidet das Bild.** Die Kommission liefert beide
+Fassungen mit; der Seitenbau misst die Helligkeit der Zielflaeche und nimmt die
+passende (ueber die aktuelle Kohorte: 80x schwarz, 74x weiss). Eine erste
+Fassung mit selbstgebauter dunkler Hinterlegung wurde verworfen — grauer Kasten
+mit harten Kanten, und ein Eingriff in fremdes Gestaltungsmaterial.
+
+Assets in `assets/eu-ki-kennzeichnung/` (SVG als Quelle, PNG auf 1200 px
+Breite fuer die Bildkennzeichnung). Quelle:
+[digital-strategy.ec.europa.eu](https://digital-strategy.ec.europa.eu/en/policies/eu-icons-labelling-ai-generated-content).
+Die Icons stuetzen Artikel 50(4) KI-Verordnung (Deepfakes und KI-Texte zu
+Themen oeffentlichen Interesses). Unsere Testbilder sind weder das eine noch
+das andere — die Kennzeichnung ist hier **freiwillig**; die rechtliche
+Bewertung liegt bei Michael, nicht im Harness.
+
+**Noch offen:** `southbyte-tts` veroeffentlicht KI-erzeugte Audiodateien. Ein
+Bild-Icon laesst sich dort nicht einbrennen; wenn das gekennzeichnet werden
+soll, braucht es einen eigenen Weg (Hinweis auf der Seite, Metadaten in der
+Datei).
+
 ## Lizenzen der Modelle
 
 `config/models.yaml` in southbyte-vllm fuehrt Release und Lizenz je Modell; die

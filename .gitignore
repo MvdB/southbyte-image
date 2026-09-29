@@ -1,6 +1,9 @@
 .env
 results/
 *.png
+# Ausnahme: die EU-Kennzeichnungs-Icons sind PROGRAMM-ASSETS, keine erzeugten
+# Bilder. make_docs.py braucht sie; ohne sie endet der Seitenbau mit rc=1.
+!assets/eu-ki-kennzeichnung/*.png
 *.jpg
 # Publizierte Galerie-Bilder sind Ausnahme (sonst würden sie nie committet):
 !docs/img/**
