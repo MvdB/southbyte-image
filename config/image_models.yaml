@@ -19,7 +19,7 @@ models:
     steps: 4
     guidance: 0.0
     active: true
-    notes: "timestep-distilliert, guidance-frei"
+    notes: "timestep-distilliert, guidance-frei (guidance_scale 0.0). ~54 GB, passt allein."
 
   - name: Qwen-Image-2512
     dir: Qwen--Qwen-Image-2512
@@ -27,14 +27,20 @@ models:
     steps: 20
     guidance: 3.5
     active: true
+    notes: "QwenImagePipeline, true_cfg. ~54 GB. Das Handprofil nannte 50 Schritte bei 1328x1328 als Startwert; gemessen wird mit 20 Schritten bei 1024x1024 wie die uebrige Reihe."
 
   - name: Qwen-Image-Flash
     dir: nvidia--Qwen-Image-Flash
     loader: auto
     steps: 8
-    guidance: 3.5
+    # 1.0 statt 3.5 seit 2026-09-29: das Modell ist ein DISTILLAT und laut
+    # handvalidiertem Profil auf true_cfg_scale ~1.0 ausgelegt. Mit Testsatz v1
+    # war der Wert folgenlos (ohne Negativ-Prompt wirkt true_cfg_scale nicht),
+    # mit v2 wirkt er — der Lauf vom 27.09. lief also ausserhalb des
+    # Betriebspunkts des Modells.
+    guidance: 1.0
     active: true
-    notes: "Sweet Spot Durchsatz/Qualität"
+    notes: "Sweet Spot Durchsatz/Qualität. Distillat: true_cfg_scale ~1.0, nicht 3.5. ~54 GB."
 
   - name: Qwen-Image-2.1
     dir: Qwen--Qwen-Image-2.1

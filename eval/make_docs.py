@@ -13,6 +13,7 @@ import html
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -43,6 +44,10 @@ def _load_models() -> dict:
 
 
 _MODELS = _load_models()
+
+# Bilder, die ohne EU-Kennzeichnung veroeffentlicht wurden. Wird am Ende
+# gemeldet; leer ist der Normalfall.
+_OHNE_KENNZEICHEN: list[str] = []
 
 # Lizenzen, die eine kommerzielle Nutzung ausschliessen. Ein Modell mit so einer
 # Lizenz bekommt auf der Seite einen sichtbaren Hinweis — die gezeigten Bilder
@@ -157,6 +162,67 @@ def _card_url(hf_dir: str) -> str:
     return "https://huggingface.co/" + hf_dir.replace("--", "/", 1)
 
 
+# ── EU-Kennzeichnung fuer KI-erzeugte Inhalte ──────────────────────────────
+# Icon der Europaeischen Kommission (Variante "AI GENERATED", weiss
+# transparent) aus assets/eu-ki-kennzeichnung/. Quelle:
+# digital-strategy.ec.europa.eu/en/policies/eu-icons-labelling-ai-generated-content
+#
+# NUR AUF DEN VEROEFFENTLICHTEN KOPIEN, nie auf den gemessenen Bildern unter
+# results/. Grund: unsere Bewertung laeuft ueber ein Bildmodell als Judge und
+# misst gerenderten Text per OCR — ein eingebranntes Label mit den Woertern
+# "AI GENERATED" liefe in die Text-CER und in die Prompt-Treue. Wir wuerden
+# unser eigenes Wasserzeichen mitmessen. results/ bleibt die Beweisebene,
+# docs/img/ ist die Veroeffentlichung.
+#
+# Unten links, weil unsere Szenen das Motiv meist mittig bis oben tragen und
+# Provenienzangaben konventionell unten gesucht werden. Die Vorgabe der
+# Kommission ("bei erstem Kontakt klar wahrnehmbar, sichtbar auch beim
+# Weiterteilen oder Herunterladen") ist damit erfuellt: das Label steckt IM
+# Bild, nicht nur in der Seite drumherum.
+_KENNZEICHEN_DIR = Path(__file__).resolve().parents[1] / "assets" / "eu-ki-kennzeichnung"
+_KENNZEICHEN_BREITE = 0.34   # Anteil der Bildbreite
+_KENNZEICHEN_RAND = 0.025    # Abstand zum Bildrand, Anteil der Bildbreite
+
+
+def _kennzeichen_fuer(bild, x: int, y: int, breite: int, hoehe: int) -> Path:
+    """Schwarze oder weisse Fassung — je nachdem, worauf das Label zu liegen kommt.
+
+    Die Kommission liefert beide Fassungen genau dafuer mit. Eine selbstgebaute
+    Hinterlegung waere ein Eingriff in fremdes Gestaltungsmaterial und sah in
+    der ersten Fassung auch so aus (grauer Kasten mit harten Kanten). Statt
+    dessen: die Helligkeit der Zielflaeche messen und die passende Fassung
+    nehmen — heller Hintergrund bekommt die schwarze Pille, dunkler die weisse.
+    """
+    ausschnitt = bild.convert("L").crop((x, y, x + breite, y + hoehe))
+    mittel = sum(ausschnitt.getdata()) / max(len(ausschnitt.getdata()), 1)
+    fassung = "black" if mittel > 127 else "white"
+    return _KENNZEICHEN_DIR / f"ai-generated_{fassung}.png"
+
+
+def _kennzeichnen(src: Path, dst: Path) -> bool:
+    """Bild mit der EU-Kennzeichnung nach dst schreiben. False, wenn nicht moeglich."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return False
+    with Image.open(src) as roh:
+        bild = roh.convert("RGBA")
+    breite = max(int(bild.width * _KENNZEICHEN_BREITE), 96)
+    rand = int(bild.width * _KENNZEICHEN_RAND)
+    # Hoehe aus dem Seitenverhaeltnis des Assets (3,16:1), vor dem Laden gebraucht
+    with Image.open(_KENNZEICHEN_DIR / "ai-generated_black.png") as muster:
+        hoehe = max(round(muster.height * breite / muster.width), 1)
+    x, y = rand, bild.height - hoehe - rand
+    pfad = _kennzeichen_fuer(bild, x, y, breite, hoehe)
+    if not pfad.exists():
+        return False
+    with Image.open(pfad) as ikon_roh:
+        ikon = ikon_roh.convert("RGBA").resize((breite, hoehe), Image.LANCZOS)
+    bild.alpha_composite(ikon, (x, y))
+    bild.convert("RGB").save(dst, "PNG", optimize=True)
+    return True
+
+
 def _make_thumb(src: Path, dst: Path, max_px: int = _THUMB_PX) -> bool:
     """Kleines JPEG-Thumbnail nur fürs Overview-Raster; Original bleibt erhalten.
     Rückgabe False, falls Pillow fehlt (dann nutzt der Aufrufer das Original)."""
@@ -255,9 +321,21 @@ def build_html(runs: list[dict], docs: Path) -> str:
                 thumb_rel = f"img/{model}/thumb/{Path(name).stem}.jpg"  # nur Overview
                 (docs / full_rel).parent.mkdir(parents=True, exist_ok=True)
                 (docs / thumb_rel).parent.mkdir(parents=True, exist_ok=True)
-                thumbed = src_img.exists() and _make_thumb(src_img, docs / thumb_rel)
+                # Reihenfolge: erst kennzeichnen, dann das Thumbnail AUS der
+                # gekennzeichneten Kopie ziehen — sonst traegt das Raster auf
+                # der Seite kein Label. Schlaegt die Kennzeichnung fehl (kein
+                # Pillow, Asset fehlt), wird das Original kopiert und der
+                # Aufrufer unten gewarnt: eine ungekennzeichnete
+                # Veroeffentlichung soll auffallen, nicht stillschweigend
+                # passieren.
+                gekennzeichnet = False
                 if src_img.exists():
-                    shutil.copy2(src_img, docs / full_rel)
+                    gekennzeichnet = _kennzeichnen(src_img, docs / full_rel)
+                    if not gekennzeichnet:
+                        shutil.copy2(src_img, docs / full_rel)
+                        _OHNE_KENNZEICHEN.append(full_rel)
+                quelle_thumb = (docs / full_rel) if (docs / full_rel).exists() else src_img
+                thumbed = quelle_thumb.exists() and _make_thumb(quelle_thumb, docs / thumb_rel)
                 if not thumbed:
                     thumb_rel = full_rel  # Fallback ohne Pillow: Original im Raster
                 extra = []
@@ -345,6 +423,14 @@ def main() -> int:
     runs = load_runs(Path(args.results))
     (docs / "index.html").write_text(build_html(runs, docs), encoding="utf-8")
     print(f"✓ docs/index.html geschrieben ({len(runs)} Modell(e))")
+    if _OHNE_KENNZEICHEN:
+        # Laut und mit Exitcode: eine Veroeffentlichung ohne die EU-Kennzeichnung
+        # ist ein Mangel, keine Nebensache. Ursache ist fast immer ein fehlendes
+        # Pillow oder ein verschobenes Asset unter assets/eu-ki-kennzeichnung/.
+        print(f"✗ {len(_OHNE_KENNZEICHEN)} Bild(er) OHNE EU-Kennzeichnung veroeffentlicht, "
+              f"z.B. {_OHNE_KENNZEICHEN[0]}", file=sys.stderr)
+        return 1
+    print(f"✓ EU-Kennzeichnung (AI GENERATED) auf allen veroeffentlichten Bildern")
     return 0
 
 
