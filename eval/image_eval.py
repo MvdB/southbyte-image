@@ -28,6 +28,9 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from kennzeichnung import kennzeichnen  # noqa: E402
+
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # vision_client / metrics importierbar machen
 
@@ -74,6 +77,13 @@ def generate_one(endpoint: str, case: dict, args) -> dict:
 def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
     img_dir = run_dir / "img"
     img_dir.mkdir(parents=True, exist_ok=True)
+    # EU-Kennzeichnung entsteht HIER, direkt nach der Erzeugung — nicht erst
+    # beim Veroeffentlichen. Ein Bild ist damit von Anfang an gekennzeichnet.
+    # img/ bleibt roh: darauf laeuft die Bewertung, und ein eingebranntes
+    # "AI GENERATED" liefe sonst in die Text-CER und in die Prompt-Treue.
+    kenn_dir = run_dir / "img_gekennzeichnet"
+    kenn_dir.mkdir(parents=True, exist_ok=True)
+    ohne_kennzeichen: list[str] = []
     raw_path = run_dir / "results_raw.jsonl"
     records: list[dict] = []
     with raw_path.open("w", encoding="utf-8") as raw:
@@ -86,6 +96,10 @@ def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
                     g = generate_one(args.endpoint, case, args)
                     fn = f"{case['id']}{suffix}.png"
                     (img_dir / fn).write_bytes(g["png"])
+                    if kennzeichnen(img_dir / fn, kenn_dir / fn):
+                        rec.update(image_gekennzeichnet=f"img_gekennzeichnet/{fn}")
+                    else:
+                        ohne_kennzeichen.append(fn)
                     rec.update(image=f"img/{fn}", gen_seconds=g["gen_seconds"])
                     print(f"  ✓ {case['id']}{suffix}  {g['gen_seconds']}s")
                 except Exception as e:  # noqa: BLE001 — Ausfall eines Falls kippt den Lauf nicht
@@ -94,6 +108,11 @@ def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
                 raw.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 raw.flush()  # raw-first: nach jedem Fall persistiert
                 records.append(rec)
+    if ohne_kennzeichen:
+        # Laut, nicht still: ohne Kennzeichnung gibt es keinen Liefergegenstand,
+        # und der Seitenbau wuerde spaeter an derselben Stelle scheitern.
+        print(f"  ✗ {len(ohne_kennzeichen)} Bild(er) ohne EU-Kennzeichnung "
+              f"(Pillow oder Asset fehlt?), z.B. {ohne_kennzeichen[0]}", file=sys.stderr)
     return records
 
 
