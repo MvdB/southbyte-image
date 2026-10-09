@@ -15,6 +15,7 @@ in Env-Variablen übersetzt):
   MODEL_DIR      Verzeichnisname unter /hf_models (z.B. black-forest-labs--FLUX.1-schnell)
   IMG_STEPS      num_inference_steps (Default 20)
   IMG_GUIDANCE   guidance_scale bzw. true_cfg_scale (Default 3.5)
+  IMG_KV_CACHE   1 = use_kv_cache an, wenn die Pipeline es kennt (Default 1)
   IMG_SIZE       WxH (Default 1024x1024)
   IMG_DTYPE      bfloat16|float16 (Default bfloat16)
 """
@@ -41,6 +42,7 @@ SERVED_NAME = os.environ.get("SERVED_MODEL_NAME", MODEL_DIR)
 
 DEF_STEPS = int(os.environ.get("IMG_STEPS", "20"))
 DEF_GUIDANCE = float(os.environ.get("IMG_GUIDANCE", "3.5"))
+KV_CACHE = os.environ.get("IMG_KV_CACHE", "1") not in ("0", "false", "False")
 DEF_W, DEF_H = (int(x) for x in os.environ.get("IMG_SIZE", "1024x1024").lower().split("x"))
 _DTYPES = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 DTYPE = _DTYPES.get(os.environ.get("IMG_DTYPE", "bfloat16"), torch.bfloat16)
@@ -135,6 +137,12 @@ def generate(req: GenRequest) -> dict[str, Any]:
         num_images_per_prompt=req.n, generator=generator,
     )
     sig_params = inspect.signature(_PIPE.__call__).parameters
+    # Qwen-Image-2.1-Turbo empfiehlt prefix KV caching — es spart Rechenzeit
+    # ueber die Denoising-Schritte und aendert das Bild nicht. Nur setzen, wenn
+    # die Pipeline es kennt; die Filterung weiter unten wuerde es sonst ohnehin
+    # verwerfen, aber eine Warnzeile je Bild waere laestig.
+    if KV_CACHE and "use_kv_cache" in sig_params:
+        kwargs["use_kv_cache"] = True
     if "true_cfg_scale" in sig_params:
         kwargs["true_cfg_scale"] = guidance
     else:

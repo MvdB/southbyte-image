@@ -1,0 +1,47 @@
+# southbyte-image Serving-Container v3.1 — fuer Qwen-Image-2.1-Turbo (2026-10-09).
+#
+# Wie v3, nur mit einem neueren diffusers-Commit. Der Grund steht in PR #14950
+# ("Configure fixed sampling sigmas on QwenImage21Pipeline", gemergt
+# 2026-10-05): das Turbo-Distillat bringt seinen 8-Schritt-Zeitplan IM
+# CHECKPOINT mit, und erst dieser Patch liest ihn als sample_sigmas aus.
+#
+# v3 ist auf 6256aa7666ce gepinnt — den Commit vom 18.09., der Qwen-Image 2.1
+# ueberhaupt erst einfuehrte. Dort gibt es sample_sigmas nicht (im Image
+# nachgesehen: 0 Treffer im Quelltext der Pipeline). Mit v3 wuerde das Modell
+# also 8 Schritte auf dem FALSCHEN Zeitplan rechnen — es liefe, saehe aber
+# schlechter aus, und wir haetten die Distillation gemessen statt des Modells.
+# Dasselbe Muster wie bei NeMo, diffusers 0.40 und transformers: das Release
+# ist aelter als das Modell.
+#
+# v3 bleibt unangetastet, damit die Zahlen von Qwen-Image-2.1 vom 22.09.
+# reproduzierbar bleiben. Die Registry waehlt das Image je Modell.
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONUNBUFFERED=1
+
+# Gepinnt auf den MERGE-Commit von PR #14950, nicht auf den Hauptzweig.
+RUN pip install --no-cache-dir \
+      "git+https://github.com/huggingface/diffusers@da1d3829cf08d4f329b526d89e17cc035c049d8d" \
+      "transformers==5.17.0" \
+      accelerate safetensors sentencepiece protobuf pyyaml \
+      fastapi "uvicorn[standard]" pydantic
+
+# Beleg im Image: fehlt eines davon, soll der Bau scheitern und nicht der Lauf.
+# sample_sigmas ist der Grund fuer dieses Image — ohne den Treffer waere v3.1
+# nur ein teureres v3.
+RUN python -c "import inspect, diffusers, transformers; \
+from diffusers import QwenImage21Pipeline as P; \
+assert hasattr(diffusers, 'QwenImage21Transformer2DModel'), 'Transformer fehlt'; \
+assert hasattr(diffusers, 'AutoencoderKLQwenImage21'), 'VAE fehlt'; \
+src = inspect.getsource(P); \
+assert 'sample_sigmas' in src, 'sample_sigmas fehlt — Commit zu alt, PR #14950 nicht drin'; \
+assert 'use_kv_cache' in inspect.signature(P.__call__).parameters, 'use_kv_cache fehlt'; \
+print('v3.1 ok: diffusers', diffusers.__version__, 'transformers', transformers.__version__, '| sample_sigmas da')"
+
+COPY serving/server_image.py serving/loaders.py /opt/southbyte-image/
+WORKDIR /opt/southbyte-image
+
+EXPOSE 8010
+CMD ["python", "server_image.py"]
