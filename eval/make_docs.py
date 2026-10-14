@@ -179,50 +179,6 @@ def _card_url(hf_dir: str) -> str:
 # Kommission ("bei erstem Kontakt klar wahrnehmbar, sichtbar auch beim
 # Weiterteilen oder Herunterladen") ist damit erfuellt: das Label steckt IM
 # Bild, nicht nur in der Seite drumherum.
-_KENNZEICHEN_DIR = Path(__file__).resolve().parents[1] / "assets" / "eu-ki-kennzeichnung"
-_KENNZEICHEN_BREITE = 0.34   # Anteil der Bildbreite
-_KENNZEICHEN_RAND = 0.025    # Abstand zum Bildrand, Anteil der Bildbreite
-
-
-def _kennzeichen_fuer(bild, x: int, y: int, breite: int, hoehe: int) -> Path:
-    """Schwarze oder weisse Fassung — je nachdem, worauf das Label zu liegen kommt.
-
-    Die Kommission liefert beide Fassungen genau dafuer mit. Eine selbstgebaute
-    Hinterlegung waere ein Eingriff in fremdes Gestaltungsmaterial und sah in
-    der ersten Fassung auch so aus (grauer Kasten mit harten Kanten). Statt
-    dessen: die Helligkeit der Zielflaeche messen und die passende Fassung
-    nehmen — heller Hintergrund bekommt die schwarze Pille, dunkler die weisse.
-    """
-    ausschnitt = bild.convert("L").crop((x, y, x + breite, y + hoehe))
-    mittel = sum(ausschnitt.getdata()) / max(len(ausschnitt.getdata()), 1)
-    fassung = "black" if mittel > 127 else "white"
-    return _KENNZEICHEN_DIR / f"ai-generated_{fassung}.png"
-
-
-def _kennzeichnen(src: Path, dst: Path) -> bool:
-    """Bild mit der EU-Kennzeichnung nach dst schreiben. False, wenn nicht moeglich."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return False
-    with Image.open(src) as roh:
-        bild = roh.convert("RGBA")
-    breite = max(int(bild.width * _KENNZEICHEN_BREITE), 96)
-    rand = int(bild.width * _KENNZEICHEN_RAND)
-    # Hoehe aus dem Seitenverhaeltnis des Assets (3,16:1), vor dem Laden gebraucht
-    with Image.open(_KENNZEICHEN_DIR / "ai-generated_black.png") as muster:
-        hoehe = max(round(muster.height * breite / muster.width), 1)
-    x, y = rand, bild.height - hoehe - rand
-    pfad = _kennzeichen_fuer(bild, x, y, breite, hoehe)
-    if not pfad.exists():
-        return False
-    with Image.open(pfad) as ikon_roh:
-        ikon = ikon_roh.convert("RGBA").resize((breite, hoehe), Image.LANCZOS)
-    bild.alpha_composite(ikon, (x, y))
-    bild.convert("RGB").save(dst, "PNG", optimize=True)
-    return True
-
-
 def _make_thumb(src: Path, dst: Path, max_px: int = _THUMB_PX) -> bool:
     """Kleines JPEG-Thumbnail nur fürs Overview-Raster; Original bleibt erhalten.
     Rückgabe False, falls Pillow fehlt (dann nutzt der Aufrufer das Original)."""
@@ -328,14 +284,18 @@ def build_html(runs: list[dict], docs: Path) -> str:
                 # Aufrufer unten gewarnt: eine ungekennzeichnete
                 # Veroeffentlichung soll auffallen, nicht stillschweigend
                 # passieren.
-                gekennzeichnet = False
-                if src_img.exists():
-                    gekennzeichnet = _kennzeichnen(src_img, docs / full_rel)
-                    if not gekennzeichnet:
-                        shutil.copy2(src_img, docs / full_rel)
-                        _OHNE_KENNZEICHEN.append(full_rel)
-                quelle_thumb = (docs / full_rel) if (docs / full_rel).exists() else src_img
-                thumbed = quelle_thumb.exists() and _make_thumb(quelle_thumb, docs / thumb_rel)
+                # Die Kennzeichnung entsteht bei der ERZEUGUNG (image_eval.py),
+                # nicht hier. Der Seitenbau kopiert nur den fertigen
+                # Liefergegenstand — und veroeffentlicht nichts Rohes: fehlt
+                # die gekennzeichnete Fassung, bleibt das Bild weg und der
+                # Lauf endet mit rc=1.
+                quelle_kenn = r["dir"] / (rec.get("image_gekennzeichnet")
+                                          or f"img_gekennzeichnet/{name}")
+                if quelle_kenn.exists():
+                    shutil.copy2(quelle_kenn, docs / full_rel)
+                elif src_img.exists():
+                    _OHNE_KENNZEICHEN.append(full_rel)
+                thumbed = (docs / full_rel).exists() and _make_thumb(docs / full_rel, docs / thumb_rel)
                 if not thumbed:
                     thumb_rel = full_rel  # Fallback ohne Pillow: Original im Raster
                 extra = []
@@ -427,10 +387,13 @@ def main() -> int:
         # Laut und mit Exitcode: eine Veroeffentlichung ohne die EU-Kennzeichnung
         # ist ein Mangel, keine Nebensache. Ursache ist fast immer ein fehlendes
         # Pillow oder ein verschobenes Asset unter assets/eu-ki-kennzeichnung/.
-        print(f"✗ {len(_OHNE_KENNZEICHEN)} Bild(er) OHNE EU-Kennzeichnung veroeffentlicht, "
-              f"z.B. {_OHNE_KENNZEICHEN[0]}", file=sys.stderr)
+        print(f"✗ {len(_OHNE_KENNZEICHEN)} Bild(er) haben KEINE gekennzeichnete Fassung "
+              f"und wurden NICHT veroeffentlicht, z.B. {_OHNE_KENNZEICHEN[0]}.\n"
+              f"  Ursache: Lauf aelter als der Kennzeichnungs-Hook, oder Pillow/Asset fehlte "
+              f"beim Erzeugen. Abhilfe: eval/nachkennzeichnen.py auf den Laufordner.",
+              file=sys.stderr)
         return 1
-    print(f"✓ EU-Kennzeichnung (AI GENERATED) auf allen veroeffentlichten Bildern")
+    print("✓ Alle veroeffentlichten Bilder tragen die EU-Kennzeichnung (bei der Erzeugung gesetzt)")
     return 0
 
 
