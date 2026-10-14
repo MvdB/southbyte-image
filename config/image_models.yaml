@@ -53,6 +53,22 @@ models:
     image: "spark-southbyte-image:v3"
     notes: "Braucht v3: QwenImage21Pipeline steckt in keinem diffusers-Release (auch 0.40.0 nicht), erst im Hauptzweig seit 2026-09-18 (PR #14804); dazu transformers >=5.17, was mit dem <5.6-Pin von Mage-Flow unvereinbar ist. Deshalb eigenes Image, Mage-Flow bleibt auf v2. Gemessen bei 1024x1024 wie die uebrige Kohorte — die Modellkarte nennt als Formate nur 2048er-Kantenlaengen, dazu gibt es einen Seitenlauf ueber 5 Faelle. LIZENZ: Qwen Research License (nicht apache-2.0 wie 2512) — Nutzung nur zu Forschungs- und Evaluationszwecken, kommerziell nur mit eigener Lizenz von Qwen. Gilt auch fuer die erzeugten Bilder; Veroeffentlichung der Messbilder am 22.09.2026 bewusst entschieden, Hinweis steht auf der Vergleichsseite."
 
+  - name: Qwen-Image-2.1-Turbo
+    dir: Qwen--Qwen-Image-2.1-Turbo
+    loader: diffusion            # wie 2.1: QwenImage21Pipeline steht nicht im AutoPipeline-Mapping
+    steps: 8                     # Modellkarte; der Checkpoint bringt seinen 8-Schritt-Zeitplan mit
+    # 1.0, nicht 3.5: das Modell ist ein DISTILLAT und laut Karte auf CFG=1
+    # ausgelegt — dieselbe Lage wie bei Qwen-Image-Flash. Der Testsatz v2 gibt
+    # je Fall einen Negativ-Prompt mit; bei true_cfg_scale 1.0 bleibt der
+    # folgenlos, und genau so soll es sein. Mit 3.5 wuerde der Negativ-Prompt
+    # echte CFG einschalten, die Rechenzeit verdoppeln und das Distillat
+    # ausserhalb seines Betriebspunkts messen.
+    guidance: 1.0
+    size: "1024x1024"            # Kohorten-Aufloesung; die Karte nennt 1680x2512
+    active: false                # Gewichte noch nicht gesynct (Stand 09.10.2026)
+    image: "spark-southbyte-image:v3.1"
+    notes: "VORBEREITET 09.10.2026, Gewichte kommen mit dem naechsten Sync. Beschleunigter Checkpoint von Qwen-Image-2.1: gleiche 7B-Architektur, 8 statt 40 Schritte, CFG=1, prefix KV caching. BRAUCHT v3.1 und nicht v3: das Turbo-Distillat bringt seinen Zeitplan IM CHECKPOINT mit, und erst PR #14950 (gemergt 05.10.2026) liest ihn als sample_sigmas. Der v3-Pin 6256aa7666ce ist vom 18.09. und kennt sample_sigmas nicht — im Image nachgesehen, 0 Treffer im Pipeline-Quelltext. Mit v3 liefen die 8 Schritte auf dem falschen Zeitplan: es liefe, saehe aber schlechter aus, und gemessen waere die Distillation statt des Modells. LIZENZ: Qwen Research License wie 2.1 — Nutzung nur zu Forschungs- und Evaluationszwecken, gilt auch fuer die erzeugten Bilder. ERWARTUNG, die der Lauf pruefen soll: 2.1 hatte das beste Textrendering der Kohorte (CER 0,000) bei 55 s/Bild und nur mittlere Treue. Turbo mit 8 statt 40 Schritten sollte deutlich schneller sein — die Frage ist, was das Textrendering kostet."
+
   - name: ERNIE-Image-Turbo
     dir: baidu--ERNIE-Image-Turbo
     loader: diffusion            # ErnieImagePipeline (Custom-Klasse in diffusers 0.38)
