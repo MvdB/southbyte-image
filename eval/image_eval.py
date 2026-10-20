@@ -48,6 +48,10 @@ def load_testset(path: Path) -> list[dict]:
     return cases
 
 
+# Felder, die der Server nur bei Prompt-Upsampler liefert (FLUX.3).
+_UPSAMPLER_FELDER = ("revised_prompt", "upsample_seconds", "upsample_tokens")
+
+
 def generate_one(endpoint: str, case: dict, args) -> dict:
     """Ein Bild rendern; gibt PNG-Bytes + Timing zurück (oder Fehler)."""
     payload = {
@@ -71,7 +75,17 @@ def generate_one(endpoint: str, case: dict, args) -> dict:
         body = json.loads(resp.read())
     dt = time.perf_counter() - t0
     png = base64.b64decode(body["data"][0]["b64_json"])
-    return {"png": png, "gen_seconds": body.get("gen_seconds", round(dt, 2))}
+    erg = {"png": png, "gen_seconds": body.get("gen_seconds", round(dt, 2))}
+    # Nur bei Pipelines mit Prompt-Upsampler (FLUX.3): der Text, den das
+    # Bildmodell tatsaechlich bekam, und was der Upsampler gekostet hat.
+    # gen_seconds bleibt die Gesamtzeit, der Upsampler ist darin enthalten.
+    revised = body["data"][0].get("revised_prompt")
+    if revised:
+        erg["revised_prompt"] = revised
+    for feld in _UPSAMPLER_FELDER[1:]:
+        if body.get(feld) is not None:
+            erg[feld] = body[feld]
+    return erg
 
 
 def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
@@ -101,7 +115,11 @@ def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
                     else:
                         ohne_kennzeichen.append(fn)
                     rec.update(image=f"img/{fn}", gen_seconds=g["gen_seconds"])
-                    print(f"  ✓ {case['id']}{suffix}  {g['gen_seconds']}s")
+                    rec.update({k: g[k] for k in _UPSAMPLER_FELDER if k in g})
+                    extra = (f"  (Upsampler {g['upsample_seconds']}s, "
+                             f"{g.get('upsample_tokens', '?')} Tokens)"
+                             if "upsample_seconds" in g else "")
+                    print(f"  ✓ {case['id']}{suffix}  {g['gen_seconds']}s{extra}")
                 except Exception as e:  # noqa: BLE001 — Ausfall eines Falls kippt den Lauf nicht
                     rec.update(image=None, gen_seconds=None, error=str(e))
                     print(f"  ✗ {case['id']}{suffix}  {e}")
@@ -160,6 +178,13 @@ def summarize(records: list[dict], run_dir: Path, args) -> dict:
         "text_rendering_exact_rate": round(sum(exacts) / len(exacts), 3) if exacts else None,
         "adherence_score_mean": round(statistics.mean(adh), 3) if adh else None,
     }
+    # Nur bei Prompt-Upsampler (FLUX.3). Die Tokens als Maximum, nicht als
+    # Mittel: entscheidend ist, ob ein Fall an max_new_tokens (3584) stiess und
+    # die Beschreibung damit abgeschnitten war.
+    ups = [r["upsample_seconds"] for r in records if r.get("upsample_seconds") is not None]
+    if ups:
+        summary["upsample_seconds_mean"] = round(statistics.mean(ups), 2)
+        summary["upsample_tokens_max"] = max(int(r.get("upsample_tokens") or 0) for r in records)
     (run_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary

@@ -7,7 +7,7 @@ Ein Modell hinzufügen = **Profil/Config-Eintrag + Loader-Namen** — kein Code.
 
 | # | Teil | Datei |
 |---|------|-------|
-| ① | Serving-Image (alle Deps) | `serving/Dockerfile.image` (v1) · `.v2` (+ mage_flow/nunchaku/bnb) · `.v2.1` (= v2 + aktueller Servercode) · `.v3` (Qwen-Image-2.1) |
+| ① | Serving-Image (alle Deps) | `serving/Dockerfile.image` (v1) · `.v2` (+ mage_flow/nunchaku/bnb) · `.v2.1` (= v2 + aktueller Servercode) · `.v3` (Qwen-Image-2.1) · `.v3.1` (Qwen-Image-2.1-Turbo) · `.v4` (FLUX.3 [klein]) |
 | ② | Loader-Registry | `serving/loaders.py` |
 | ③ | Serving-Adapter (OpenAI-Images-API) | `serving/server_image.py` · Start: `serving/run_image.sh` |
 | ③ | Profile (pro Modell) | `southbyte-spark-profiles/image/<dir>/image_profile.conf` |
@@ -37,7 +37,7 @@ zwischen zwei Laeufen — 2026-09-27 **+0,055** und **−0,009** in der
 Prompt-Treue — ist die Schwelle, ab der eine Aenderung bei den anderen
 ueberhaupt etwas bedeutet.
 
-## Warum drei Images
+## Warum mehrere Images
 
 v1 und v2 tragen alles bis FLUX.2. **v3 (2026-09-22) gibt es nur wegen
 Qwen-Image-2.1:** `QwenImage21Pipeline` steckt in keinem diffusers-Release —
@@ -63,6 +63,19 @@ Negativ-Prompt trug. Ein voller Neubau von v2 wuerde torchao/nunchaku/
 bitsandbytes unpinned neu ziehen und damit die empfindliche FLUX.2-Kette
 anfassen; der Aufsatz tauscht nur `server_image.py` und `loaders.py`.
 
+**v4 (2026-10-20) gibt es nur wegen FLUX.3 [klein]:** FLUX.3 steckt in keinem
+diffusers-Release, sondern nur im Hauptzweig, und dort ausschliesslich als
+ModularPipeline; den Prompt-Upsampler als Block der Pipeline gibt es erst seit
+PR #15058. v4 ist v3.1 mit dem diffusers-Pin `4df4a5b35748` (19.10.) und prueft
+beim Bau, dass `Flux3DistilledAutoBlocks` den Block `prompt_upsampler` enthaelt
+und die Loader-Registry `flux3_modular` kennt. Gebaut wird mit Commit-Stempel,
+`/health` zeigt ihn als `version`:
+
+```bash
+docker build -f serving/Dockerfile.image.v4 \
+  --build-arg SOUTHBYTE_COMMIT="$(git rev-parse --short HEAD)" -t spark-southbyte-image:v4 .
+```
+
 **Lehre:** nach einer Aenderung an `serving/` gehoert das Image neu gebaut,
 sonst laeuft der Fix nur im Repo. Pruefen laesst sich das in einer Zeile:
 
@@ -79,6 +92,7 @@ md5sum serving/server_image.py
 | `diffusion` | ERNIE u.a. Custom-Klassen **in** diffusers (`_class_name`) | v1 |
 | `mage_flow` | Mage-Flow (ext. Lib `mage_flow`) | **v2** (flash-attn) |
 | `flux2_singlefile` | FLUX.2-klein/-dev (NVFP4-Single-File + geteilte Komponenten) | **v2** (nunchaku/torchao) |
+| `flux3_modular` | FLUX.3 [klein] (ModularPipeline + Prompt-Upsampler aus `components_dir`) | **v4** |
 
 Ohne `PROFILE_LOADER` rät `loaders._autodetect()` aus `model_index.json`.
 
@@ -94,6 +108,30 @@ Modellstart.
 1. Eintrag in `config/image_models.yaml` (`dir`, `loader`, `steps`, `guidance`, ggf. `components_dir`).
 2. `active: true`, sobald die Serving-Deps im Image sind.
 3. `python eval/orchestrate_images.py --models <Name>` — generiert + bewertet + baut die Seite.
+
+## FLUX.3: der Prompt, den das Bildmodell sieht, ist ein anderer
+
+FLUX.3 [klein] ist laut Modellkarte nicht ohne Prompt-Upsampler zu betreiben:
+ein eigenes 9B-Modell (Qwen3.5-Finetune, `black-forest-labs--flux-3-image-klein-pup`)
+schreibt die Anfrage vor dem Text-Encoder zu einer vollstaendigen
+Szenenbeschreibung um — auf Englisch, zitierter Text behaelt seine Sprache.
+
+- **Laden:** `modular_model_index.json` verweist per Hub-ID auf das Upsampler-Repo,
+  und das ist offline nicht aufloesbar. Der Loader laedt ihn deshalb ausdruecklich
+  aus `components_dir` und setzt ihn per `update_components` ein; alles andere
+  kommt aus dem Modellverzeichnis, die VAE in fp32.
+- **Nachvollziehbar:** Der Server gibt den umgeschriebenen Prompt je Bild als
+  `revised_prompt` zurueck (Feldname wie in der OpenAI-Images-API), dazu
+  `upsample_seconds` und `upsample_tokens`. `image_eval.py` schreibt alle drei
+  in `results_raw.jsonl`; `summary.json` bekommt `upsample_seconds_mean` und
+  `upsample_tokens_max`. `gen_seconds` bleibt die Gesamtzeit inklusive Upsampler.
+- **Bewertet wird gegen den Original-Prompt** des Testsatzes, nicht gegen den
+  umgeschriebenen — gemessen wird, ob das Bild die Anfrage trifft.
+- **Ohne Upsampler** nur fuer Vergleichslaeufe: `prompt_upsampler: false` in der
+  Registry entfernt den Block aus der Pipeline.
+- **Offen:** diffusers dekodiert den Upsampler greedy, die BFL-Referenz (vLLM)
+  setzt fuer Text-zu-Bild zusaetzlich eine presence penalty von 1,5. Stoesst
+  `upsample_tokens_max` an 3584, ist die Beschreibung abgeschnitten.
 
 ## Guidance: bei den Qwen-Modellen wirkungslos
 
@@ -156,6 +194,15 @@ Betroffen sind aktuell **FLUX.2-dev** und **Qwen-Image-2.1** (Qwen Research
 License, 2026-09-20: Nutzung nur fuer Forschung und Evaluation). Die
 Einschraenkung gilt auch fuer die erzeugten Bilder — dass die Messbilder
 trotzdem auf der Seite stehen, ist eine bewusste Entscheidung vom 22.09.2026.
+
+**FLUX.3 [klein]** steht unter der FLUX Kommunity License v1.0 (`flux-kommunity`)
+und bekommt einen eigenen Hinweis (`_MIT_BEDINGUNGEN`): nicht-kommerzielle
+Nutzung erlaubt, kommerzielle Nutzung der Bilder nur fuer Anwender unter
+5 Mio. US-Dollar Jahresumsatz und nur mit Inhaltsfilter oder Pruefung vor der
+Veroeffentlichung (Abschnitt 2.e) sowie KI-Kennzeichnung, soweit gesetzlich
+verlangt. Einen Inhaltsfilter hat die diffusers-Pipeline nicht — die
+Messbilder also vor dem Commit von `docs/img/` ansehen. Upsampler und
+Text-Encoder stehen unter Apache-2.0.
 
 Beim Nachtragen in `models.yaml`: **kein Kommentar hinter dem Wert.** Die
 Parser in `eval/make_docs.py` und `southbyte-results/feeds.py` lesen die Zeile

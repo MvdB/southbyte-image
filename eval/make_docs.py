@@ -58,23 +58,45 @@ _NICHT_KOMMERZIELL = {
                                   "https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md"),
 }
 
+# Lizenzen, die kommerzielle Nutzung nicht ausschliessen, sondern an Bedingungen
+# knuepfen. Der Satz fuer die nicht-kommerziellen ("nur Forschung und
+# Evaluation") traefe sie nicht, deshalb ein eigener Hinweis mit eigenem Text.
+_MIT_BEDINGUNGEN = {
+    "flux-kommunity": (
+        "FLUX Kommunity License v1.0",
+        "https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md",
+        ("Nicht-kommerzielle Nutzung ist erlaubt. Die erzeugten Bilder kommerziell nutzen duerfen nur "
+         "Anwender mit weniger als 5 Mio. US-Dollar Jahresumsatz (einschliesslich verbundener "
+         "Unternehmen), und auch dann nur mit Inhaltsfilter oder Pruefung vor der Veroeffentlichung "
+         "sowie einer KI-Kennzeichnung, soweit das Gesetz sie verlangt. Alles Weitere braucht eine "
+         "Lizenz von Black Forest Labs.")),
+}
+
 
 def _lizenz_hinweis(namen: list[str]) -> str:
-    """Hinweisblock fuer alle gezeigten Modelle mit nicht-kommerzieller Lizenz."""
+    """Hinweisblock fuer alle gezeigten Modelle mit nicht-kommerzieller Lizenz
+    oder mit einer Lizenz, die kommerzielle Nutzung an Bedingungen knuepft."""
     betroffen = []
+    bedingt = []
     for n in namen:
         lic = str(_MODELS.get(n, {}).get("license", "") or "")
         if lic in _NICHT_KOMMERZIELL:
             bez, url = _NICHT_KOMMERZIELL[lic]
             betroffen.append(f'<strong>{html.escape(n)}</strong> — <a href="{url}" target="_blank" '
                              f'rel="noopener">{html.escape(bez)}</a>')
-    if not betroffen:
-        return ""
-    return ('<p class="hint lizenz"><strong>Nicht-kommerzielle Lizenzen:</strong> '
-            + " · ".join(betroffen)
-            + '. Diese Modelle duerfen nur zu Forschungs- und Evaluationszwecken genutzt werden; '
-              'die hier gezeigten Bilder sind im Rahmen dieser Evaluation entstanden. Wer sie '
-              'kommerziell nutzen will, braucht eine eigene Lizenz des Anbieters.</p>')
+        elif lic in _MIT_BEDINGUNGEN:
+            bez, url, text = _MIT_BEDINGUNGEN[lic]
+            bedingt.append(f'<p class="hint lizenz"><strong>Lizenz mit Bedingungen:</strong> '
+                           f'<strong>{html.escape(n)}</strong> — <a href="{url}" target="_blank" '
+                           f'rel="noopener">{html.escape(bez)}</a>. {html.escape(text)}</p>')
+    teile = []
+    if betroffen:
+        teile.append('<p class="hint lizenz"><strong>Nicht-kommerzielle Lizenzen:</strong> '
+                     + " · ".join(betroffen)
+                     + '. Diese Modelle duerfen nur zu Forschungs- und Evaluationszwecken genutzt werden; '
+                       'die hier gezeigten Bilder sind im Rahmen dieser Evaluation entstanden. Wer sie '
+                       'kommerziell nutzen will, braucht eine eigene Lizenz des Anbieters.</p>')
+    return "\n".join(teile + bedingt)
 
 
 def _rel_cell(name: str) -> str:

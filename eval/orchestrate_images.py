@@ -93,6 +93,10 @@ def write_profile(m: dict, defaults: dict) -> None:
     ]
     if m.get("components_dir"):
         lines.append(f"PROFILE_COMPONENTS_DIR={m['components_dir']}")
+    # Nur FLUX.3 kennt den Schalter (Loader flux3_modular); ohne Eintrag in der
+    # Registry entscheidet der Loader, und der laesst den Upsampler an.
+    if "prompt_upsampler" in m:
+        lines.append(f"PROFILE_PROMPT_UPSAMPLER={1 if m['prompt_upsampler'] else 0}")
     if m.get("notes"):
         lines.append(f"PROFILE_NOTES={m['notes']!r}")
     (d / "image_profile.conf").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -11,17 +11,23 @@ Strategien
   diffusion         DiffusionPipeline (via _class_name)  ERNIE (ErnieImagePipeline)
   mage_flow         from mage_flow import MageFlowPipeline   Mage-Flow (ext. Lib)
   flux2_singlefile  Flux2Pipeline + Single-File-NVFP4-Transformer  FLUX.2-klein/-dev
+  flux3_modular     ModularPipeline + Prompt-Upsampler (lokal)   FLUX.3 [klein]
 
 `auto` und `diffusion` laufen im aktuellen Container (diffusers 0.38). `mage_flow`
 und `flux2_singlefile` brauchen das v2-Image (mage_flow-Paket bzw. nunchaku/torchao
 für NVFP4) — der Code ist aber schon hier, damit ein neues Modell nur noch ein
 Profil + den Loader-Namen braucht.
+
+`flux3_modular` braucht das v4-Image: FLUX.3 steckt nur im diffusers-Hauptzweig
+und nur als ModularPipeline.
 """
 from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import torch
@@ -162,12 +168,155 @@ def _load_flux2_bnb(model_path: str, dtype, opts: dict) -> Any:
         comp, transformer=transformer, torch_dtype=dtype, local_files_only=True)
 
 
+def _synchronisieren() -> None:
+    """Wartet auf die GPU, damit eine Zeitmessung die Rechnung enthält und nicht nur den Aufruf."""
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+class _Flux3ModularAdapter:
+    """diffusers-kompatible Hülle um die FLUX.3-ModularPipeline (2026-10-20).
+
+    Eine ModularPipeline liefert keinen Output mit `.images`, sondern den
+    PipelineState; was man braucht, fordert man mit `output=` an. Die Hülle holt
+    die Bilder UND den Prompt, den der Upsampler geschrieben hat. Bei FLUX.3 ist
+    der Prompt der Anfrage nicht der, den das Bildmodell sieht — ohne den
+    umgeschriebenen Text lässt sich ein Lauf nicht nachvollziehen.
+
+    Die Signatur nennt bewusst weder `negative_prompt` noch `guidance_scale`:
+    das Distillat kennt beides nicht (16 Schritte, keine CFG). Der Server
+    verwirft die beiden dann mit einer Warnzeile im Log, wie bei FLUX.2.
+    """
+
+    def __init__(self, pipe: Any, upsampler: Any = None):
+        self._pipe = pipe
+        self.prompt_upsampler_aktiv = upsampler is not None
+        self._messung = {"sekunden": 0.0, "tokens": 0}
+        if upsampler is not None:
+            self._generate_messen(upsampler)
+
+    def _generate_messen(self, upsampler: Any) -> None:
+        """Misst den Upsampler getrennt, ohne die Pipeline umzubauen.
+
+        Der Upsampler-Block ruft `prompt_upsampler.generate(...)` auf. Die Instanz
+        bekommt eine Hülle um genau diese Methode, die Zeit und neu erzeugte
+        Tokens mitschreibt. Die Tokens zeigen, ob die Beschreibung an der Grenze
+        von `max_new_tokens` (3584) abgeschnitten wurde.
+        """
+        original = upsampler.generate
+        messung = self._messung
+
+        def generate(*args: Any, **kwargs: Any) -> Any:
+            _synchronisieren()
+            t0 = time.perf_counter()
+            out = original(*args, **kwargs)
+            _synchronisieren()
+            messung["sekunden"] += time.perf_counter() - t0
+            ids = kwargs.get("input_ids")
+            if ids is not None and hasattr(out, "shape"):
+                messung["tokens"] += int(out.shape[-1] - ids.shape[-1])
+            return out
+
+        upsampler.generate = generate
+
+    def to(self, device: Any) -> _Flux3ModularAdapter:
+        self._pipe = self._pipe.to(device)
+        return self
+
+    def __call__(self, prompt: str, width: int = 1024, height: int = 1024,
+                 num_inference_steps: int = 16, num_images_per_prompt: int = 1,
+                 generator: Any = None) -> SimpleNamespace:
+        self._messung.update(sekunden=0.0, tokens=0)
+        out = self._pipe(prompt=prompt, width=int(width), height=int(height),
+                         num_inference_steps=int(num_inference_steps),
+                         num_images_per_prompt=int(num_images_per_prompt or 1),
+                         generator=generator, output=["images", "prompt"])
+        ergebnis = SimpleNamespace(images=out["images"])
+        if self.prompt_upsampler_aktiv:
+            ergebnis.revised_prompt = out["prompt"]
+            ergebnis.upsample_seconds = round(self._messung["sekunden"], 2)
+            ergebnis.upsample_tokens = self._messung["tokens"]
+        return ergebnis
+
+
+def _load_flux3_modular(model_path: str, dtype: Any, opts: dict) -> Any:
+    """FLUX.3 [klein] als ModularPipeline, Prompt-Upsampler aus lokalem Verzeichnis.
+
+    FLUX.3 gibt es in diffusers nur als ModularPipeline (Image v4). Die Gewichte
+    kommen lazy: `from_pretrained` baut nur die Pipeline, `load_components` lädt.
+
+    Der Upsampler wird NICHT über `modular_model_index.json` geladen: der Index
+    verweist per Hub-ID auf `black-forest-labs/flux-3-image-klein-pup`, und das
+    lässt sich offline nicht auflösen. Er kommt deshalb ausdrücklich aus
+    COMPONENTS_DIR und wird per `update_components` eingesetzt.
+
+    Die VAE rechnet in fp32, der Rest im Profil-dtype — so steht es in der
+    diffusers-Doku zu FLUX.3 und im Beispiel von PR #15058.
+
+    opts:
+      COMPONENTS_DIR    Verzeichnis des Upsamplers (black-forest-labs--flux-3-image-klein-pup);
+                        ein bloßer Name wird relativ zum Modellspeicher aufgelöst.
+                        Pflicht, solange der Upsampler an ist.
+      PROMPT_UPSAMPLER  0/false/aus = ohne Upsampler: der Block wird aus der
+                        Pipeline entfernt, der Prompt geht unverändert an den
+                        Text-Encoder. Standard ist an — die Modellkarte sagt
+                        ausdrücklich, das Modell nicht ohne zu betreiben. Der
+                        Schalter ist für Vergleichsläufe da.
+    """
+    from diffusers import ModularPipeline  # type: ignore
+    from transformers import (  # type: ignore
+        AutoProcessor,
+        Qwen3_5ForConditionalGeneration,
+    )
+
+    schalter = str(opts.get("PROMPT_UPSAMPLER") or "1").strip().lower()
+    upsampler_an = schalter not in ("0", "false", "aus", "nein", "no", "off")
+    pup = None
+    if upsampler_an:
+        comp = opts.get("COMPONENTS_DIR")
+        if not comp:
+            raise RuntimeError("FLUX.3 mit Prompt-Upsampler braucht COMPONENTS_DIR "
+                               "(black-forest-labs--flux-3-image-klein-pup); "
+                               "ohne Upsampler: PROMPT_UPSAMPLER=0")
+        pup = Path(comp) if Path(comp).is_absolute() else Path(model_path).parent / comp
+        if not pup.is_dir():
+            raise RuntimeError(f"Upsampler-Verzeichnis fehlt: {pup} (kommt über den Collection-Sync)")
+
+    pipe = ModularPipeline.from_pretrained(model_path, local_files_only=True)
+    if not upsampler_an:
+        blocks = pipe.blocks  # eine Kopie — die Pipeline selbst bleibt unberührt
+        blocks.sub_blocks.pop("prompt_upsampler")
+        pipe = blocks.init_pipeline(model_path)
+
+    # Alles außer dem Upsampler aus dem Modellverzeichnis. load_components
+    # schluckt Ladefehler und schreibt nur eine Warnung; deshalb danach prüfen,
+    # sonst scheitert erst das erste Bild.
+    upsampler_teile = ("prompt_upsampler", "prompt_upsampler_processor")
+    namen = [n for n in pipe.pretrained_component_names if n not in upsampler_teile]
+    pipe.load_components(names=namen, dtype={"vae": torch.float32, "default": dtype},
+                         local_files_only=True)
+    fehlend = [n for n in namen if getattr(pipe, n, None) is None]
+    if fehlend:
+        raise RuntimeError(f"FLUX.3: Komponenten nicht geladen: {fehlend} — Ursache in den Warnungen darüber")
+
+    upsampler = None
+    if pup is not None:
+        upsampler = Qwen3_5ForConditionalGeneration.from_pretrained(
+            str(pup), dtype=dtype, local_files_only=True).eval()
+        processor = AutoProcessor.from_pretrained(str(pup), local_files_only=True)
+        pipe.update_components(prompt_upsampler=upsampler, prompt_upsampler_processor=processor)
+    print(f"[load] FLUX.3: {type(pipe).__name__}, Komponenten {namen}, "
+          f"Prompt-Upsampler {pup if pup is not None else 'AUS'}", flush=True)
+    return _Flux3ModularAdapter(pipe, upsampler)
+
+
 LOADERS: dict[str, Callable[[str, Any, dict], Any]] = {
     "auto": _load_auto,
     "diffusion": _load_diffusion,
     "mage_flow": _load_mage_flow,
     "flux2_singlefile": _load_flux2_singlefile,
     "flux2_bnb": _load_flux2_bnb,
+    "flux3_modular": _load_flux3_modular,
 }
 
 
