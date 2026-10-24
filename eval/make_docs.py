@@ -346,7 +346,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
  .grid-bg{{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
    background-image:linear-gradient(rgba(0,230,118,.15) 1px,transparent 1px),
      linear-gradient(90deg,rgba(0,230,118,.15) 1px,transparent 1px);background-size:80px 80px}}
- .wrap{{position:relative;z-index:1;max-width:min(1720px,97vw);margin:0 auto;padding:2.5rem 1.25rem}}
+ .wrap{{position:relative;z-index:1;max-width:100%;margin:0 auto;padding:2.5rem 1.5rem}}
  .wordmark{{font-family:var(--mono);font-weight:700;font-size:1.4rem;letter-spacing:1.4px;color:var(--text)}}
  .wordmark .dot{{color:var(--green)}}
  .tagline{{font-family:var(--mono);font-size:.68rem;letter-spacing:.25em;text-transform:uppercase;
@@ -370,6 +370,12 @@ def build_html(runs: list[dict], docs: Path) -> str:
  table.metrics{{width:auto;max-width:100%;margin:1rem auto}}
  table.metrics th.mname,table.metrics td.mname{{text-align:left;white-space:nowrap}}
  .scroll{{overflow-x:auto;margin:1rem 0}}
+ /* Galerie ueber die volle Breite: Spalten teilen sich die Breite, Bilder skalieren
+    mit; erst unter 120 px je Bild wird gescrollt */
+ table.galerie{{table-layout:fixed;min-width:calc(14rem + var(--n) * 120px)}}
+ table.galerie th:first-child,table.galerie td:first-child{{width:14rem}}
+ table.galerie img{{width:100%;max-width:none}}
+ table.galerie .pr{{max-width:none}}
  .hint{{color:var(--text-muted);font-size:.78rem;margin:.1rem 0 0}}
  {SORT_CSS}
  @keyframes scanline{{0%{{transform:translateY(-100vh)}}100%{{transform:translateY(100vh)}}}}
@@ -388,7 +394,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
 {testsatz_hinweis}
 {lizenz_hinweis}
 <h2>Galerie</h2>
-<div class="scroll"><table><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table></div>
+<div class="scroll"><table class="galerie" style="--n:{len(runs)}"><tr><th>Fall</th>{head}</tr>{"".join(gallery)}</table></div>
 <footer><span class="wm">SOUTH<span class="dot">.</span>BYTE</span> — Michael van den Berg ·
 <a href="https://southbyte.de">southbyte.de</a></footer>
 </div>{SORT_SCRIPT}</body></html>
@@ -403,6 +409,18 @@ def main() -> int:
     docs = Path(args.docs)
     docs.mkdir(parents=True, exist_ok=True)
     runs = load_runs(Path(args.results))
+    # Erst die Metadaten, dann die Seite: jedes gezeigte Modell braucht in der
+    # zentralen models.yaml Lizenz und Release-Datum. Fehlt etwas, entsteht keine
+    # Seite — sonst stuende ein Modell ohne Lizenzhinweis oeffentlich da, wie
+    # FLUX.3-klein und Qwen-Image-2.1-Turbo bis zum 24.10.
+    fehlt = [f"{r['summary']['model']} ({', '.join(f for f in ('license', 'release_date') if not _MODELS.get(r['summary']['model'], {}).get(f))})"
+             for r in runs
+             if not all(_MODELS.get(r["summary"]["model"], {}).get(f) for f in ("license", "release_date"))]
+    if fehlt:
+        print(f"✗ Seite NICHT gebaut: in {_MODELS_YAML} fehlen Angaben fuer {'; '.join(fehlt)}.\n"
+              f"  Erst das Modell dort eintragen (Lizenz an der LICENSE-Datei pruefen), dann neu bauen.",
+              file=sys.stderr)
+        return 1
     (docs / "index.html").write_text(build_html(runs, docs), encoding="utf-8")
     print(f"✓ docs/index.html geschrieben ({len(runs)} Modell(e))")
     if _OHNE_KENNZEICHEN:
