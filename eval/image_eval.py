@@ -52,11 +52,41 @@ def load_testset(path: Path) -> list[dict]:
 _UPSAMPLER_FELDER = ("revised_prompt", "upsample_seconds", "upsample_tokens")
 
 
+def hochsetzen(args, prompt: str) -> tuple[str, float, int]:
+    """Prompt-Upsampler als eigener Dienst (FLUX.3 klein über vLLM-Omni, Rezept).
+    Aufruf nach der Modellkarte von flux-3-image-klein-pup: Systemprompt „t2i“
+    aus system_prompts.json, gierig mit top_p 0,95, top_k 20 und presence
+    penalty 1,5, höchstens 3584 Token, Denken aus. Gibt den umgeschriebenen
+    Prompt, die Dauer und die Zahl der erzeugten Token zurück."""
+    system = json.loads(Path(args.upsampler_system).read_text(encoding="utf-8"))["t2i"]
+    body = {
+        "model": args.upsampler_model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "temperature": 0.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5, "max_tokens": 3584,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    req = urllib.request.Request(
+        args.upsampler.rstrip("/") + "/v1/chat/completions",
+        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"},
+    )
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+        antwort = json.loads(resp.read())
+    text = (antwort["choices"][0]["message"].get("content") or "").strip()
+    if not text:
+        raise RuntimeError("Upsampler lieferte keinen Text")
+    return text, round(time.perf_counter() - t0, 2), int(antwort["usage"]["completion_tokens"])
+
+
 def generate_one(endpoint: str, case: dict, args) -> dict:
     """Ein Bild rendern; gibt PNG-Bytes + Timing zurück (oder Fehler)."""
+    prompt, hoch = case["prompt"], None
+    if args.upsampler:
+        hoch = hochsetzen(args, prompt)
+        prompt = hoch[0]
     payload = {
-        "prompt": case["prompt"],
-        "negative_prompt": case.get("negative_prompt"),
+        "prompt": prompt,
+        "negative_prompt": None if args.ohne_negativ else case.get("negative_prompt"),
         "n": 1,
         "response_format": "b64_json",
         "size": args.size,
@@ -76,6 +106,9 @@ def generate_one(endpoint: str, case: dict, args) -> dict:
     dt = time.perf_counter() - t0
     png = base64.b64decode(body["data"][0]["b64_json"])
     erg = {"png": png, "gen_seconds": body.get("gen_seconds", round(dt, 2))}
+    if hoch:  # Upsampler als eigener Dienst: gen_seconds umfasst ihn wie im diffusers-Weg
+        erg.update(revised_prompt=hoch[0], upsample_seconds=hoch[1], upsample_tokens=hoch[2])
+        erg["gen_seconds"] = round(erg["gen_seconds"] + hoch[1], 2)
     # Nur bei Pipelines mit Prompt-Upsampler (FLUX.3): der Text, den das
     # Bildmodell tatsaechlich bekam, und was der Upsampler gekostet hat.
     # gen_seconds bleibt die Gesamtzeit, der Upsampler ist darin enthalten.
@@ -203,6 +236,11 @@ def main() -> int:
     ap.add_argument("--guidance", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--upsampler", help="Prompt-Upsampler als eigener Dienst (chat/completions)")
+    ap.add_argument("--upsampler-model", default="")
+    ap.add_argument("--upsampler-system", help="system_prompts.json des Upsamplers")
+    ap.add_argument("--ohne-negativ", action="store_true",
+                    help="keinen Negativ-Prompt senden (Modelle, die ihn ablehnen)")
     ap.add_argument("--score-only", action="store_true",
                     help="nicht neu generieren, letzten Lauf dieses Modells bewerten")
     ap.add_argument("--ocr-endpoint")
