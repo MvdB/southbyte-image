@@ -18,6 +18,12 @@ in Env-Variablen übersetzt):
   IMG_KV_CACHE   1 = use_kv_cache an, wenn die Pipeline es kennt (Default 1)
   IMG_SIZE       WxH (Default 1024x1024)
   IMG_DTYPE      bfloat16|float16 (Default bfloat16)
+
+Antwort-Erweiterungen, nur wenn die Pipeline sie liefert (bisher FLUX.3 mit
+Prompt-Upsampler): `data[].revised_prompt` — der Prompt, den das Bildmodell
+tatsaechlich bekam, Feldname wie in der OpenAI-Images-API —, dazu
+`upsample_seconds` und `upsample_tokens` neben `gen_seconds`. `gen_seconds`
+bleibt die Gesamtzeit und enthaelt den Upsampler.
 """
 from __future__ import annotations
 
@@ -48,7 +54,14 @@ _DTYPES = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torc
 DTYPE = _DTYPES.get(os.environ.get("IMG_DTYPE", "bfloat16"), torch.bfloat16)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-app = FastAPI(title="southbyte-image", version="0.1.0")
+# Version an genau dieser Stelle; der Commit kommt beim Bau als Bauargument
+# ins Image (SOUTHBYTE_COMMIT) und steht in /health dahinter. Ohne Stempel
+# steht die blanke Version da, nie ein erfundener Commit.
+VERSION = "0.2.0"
+_COMMIT = os.environ.get("SOUTHBYTE_COMMIT", "").strip()
+VERSION_VOLL = f"{VERSION}+{_COMMIT}" if _COMMIT else VERSION
+
+app = FastAPI(title="southbyte-image", version=VERSION_VOLL)
 _PIPE: Any = None  # lazy geladen beim Startup
 
 
@@ -96,10 +109,17 @@ def _startup() -> None:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok" if _PIPE is not None else "loading",
-            "model": SERVED_NAME, "device": DEVICE, "dtype": str(DTYPE),
-            "loader": _LOADER_NAME or None,
-            "pipeline": type(_PIPE).__name__ if _PIPE is not None else None}
+    antwort = {"status": "ok" if _PIPE is not None else "loading",
+               "model": SERVED_NAME, "device": DEVICE, "dtype": str(DTYPE),
+               "loader": _LOADER_NAME or None,
+               "pipeline": type(_PIPE).__name__ if _PIPE is not None else None,
+               "version": VERSION_VOLL}
+    # Nur Pipelines mit Upsampler kennen den Schalter (FLUX.3); von aussen soll
+    # pruefbar sein, ob er lief.
+    upsampler = getattr(_PIPE, "prompt_upsampler_aktiv", None)
+    if upsampler is not None:
+        antwort["prompt_upsampler"] = upsampler
+    return antwort
 
 
 @app.get("/v1/models")
@@ -163,14 +183,25 @@ def generate(req: GenRequest) -> dict[str, Any]:
         out = _PIPE(**{k: v for k, v in kwargs.items() if v is not None})
     dt = time.perf_counter() - t0
 
+    # Hat ein Upsampler den Prompt umgeschrieben, gehoert der neue Text in die
+    # Antwort: sonst ist nicht nachvollziehbar, was das Bildmodell gesehen hat.
+    revised = getattr(out, "revised_prompt", None)
     data = []
     for img in out.images:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        data.append({"b64_json": base64.b64encode(buf.getvalue()).decode()})
+        eintrag = {"b64_json": base64.b64encode(buf.getvalue()).decode()}
+        if revised:
+            eintrag["revised_prompt"] = revised
+        data.append(eintrag)
 
-    return {"created": int(t0), "model": SERVED_NAME,
-            "gen_seconds": round(dt, 2), "data": data}
+    antwort = {"created": int(t0), "model": SERVED_NAME,
+               "gen_seconds": round(dt, 2), "data": data}
+    for feld in ("upsample_seconds", "upsample_tokens"):
+        wert = getattr(out, feld, None)
+        if wert is not None:
+            antwort[feld] = wert
+    return antwort
 
 
 if __name__ == "__main__":

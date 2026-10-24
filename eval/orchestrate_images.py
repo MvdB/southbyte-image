@@ -93,6 +93,10 @@ def write_profile(m: dict, defaults: dict) -> None:
     ]
     if m.get("components_dir"):
         lines.append(f"PROFILE_COMPONENTS_DIR={m['components_dir']}")
+    # Nur FLUX.3 kennt den Schalter (Loader flux3_modular); ohne Eintrag in der
+    # Registry entscheidet der Loader, und der laesst den Upsampler an.
+    if "prompt_upsampler" in m:
+        lines.append(f"PROFILE_PROMPT_UPSAMPLER={1 if m['prompt_upsampler'] else 0}")
     if m.get("notes"):
         lines.append(f"PROFILE_NOTES={m['notes']!r}")
     (d / "image_profile.conf").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -137,7 +141,62 @@ def lauf_leer(m: dict) -> bool:
         return True
 
 
+def bereit(url: str, container: str, timeout: int = 1200) -> bool:
+    """Antwortet die URL mit 200? Bricht ab, sobald der Container nicht mehr läuft."""
+    for _ in range(timeout // 5):
+        try:
+            with urllib.request.urlopen(url, timeout=5):
+                return True
+        except Exception:
+            pass
+        alive = subprocess.run(["docker", "ps", "--filter", f"name={container}", "--format", "{{.Names}}"],
+                               capture_output=True, text=True)
+        if container not in alive.stdout.split():
+            return False
+        time.sleep(5)
+    return False
+
+
+def run_model_omni(m: dict, score: bool) -> None:
+    """Bildmodell über vLLM-Omni nach seinem Rezept, Upsampler als eigener Dienst."""
+    hoch = m.get("upsampler") or {}
+    log(f"── {m['name']} ({m['dir']}, vLLM-Omni{', Upsampler ' + hoch['dir'] if hoch else ''}) ──")
+    env = {**os.environ, "MODEL_DIR": m["dir"], "HOST_PORT": HOST_PORT, "CONTAINER_NAME": CONTAINER,
+           "IMAGE": m["image"], "SERVED_NAME": m["name"], "PUP_DIR": hoch.get("dir", "")}
+    if hoch.get("image"):
+        env["PUP_IMAGE"] = hoch["image"]
+    try:
+        if subprocess.run(["bash", str(REPO / "serving/run_omni.sh")], env=env).returncode != 0:
+            log(f"FEHLER Start {m['name']} — übersprungen"); return
+        if not bereit(f"http://localhost:{HOST_PORT}/v1/models", CONTAINER):
+            log(f"FEHLER {m['name']} nicht bereit — übersprungen")
+            subprocess.run(["docker", "logs", "--tail", "15", CONTAINER]); return
+        testset = m.get("testset", "testset/image_de_v2.jsonl")
+        cmd = [sys.executable, str(REPO / "eval/image_eval.py"),
+               "--endpoint", f"http://localhost:{HOST_PORT}", "--model-name", m["name"],
+               "--testset", str(REPO / testset)]
+        if m.get("size"):
+            cmd += ["--size", m["size"]]
+        if m.get("negative_prompt") is False:
+            cmd += ["--ohne-negativ"]
+        if hoch:
+            modelle = Path(os.environ.get("HF_MODELS_DIR", Path.home() / "hf_models"))
+            cmd += ["--upsampler", f"http://localhost:{os.environ.get('PUP_PORT', '8014')}",
+                    "--upsampler-model", hoch["dir"],
+                    "--upsampler-system", str(modelle / hoch["dir"] / "system_prompts.json")]
+        if score:
+            cmd += ["--judge-endpoint", JUDGE_ENDPOINT, "--judge-model", JUDGE_MODEL,
+                    "--ocr-endpoint", JUDGE_ENDPOINT, "--ocr-model", JUDGE_MODEL]
+        subprocess.run(cmd)
+    finally:
+        for c in (CONTAINER, f"{CONTAINER}-pup"):
+            subprocess.run(["docker", "rm", "-f", c], capture_output=True)
+    log(f"{m['name']} fertig, Container gestoppt")
+
+
 def run_model(m: dict, defaults: dict, score: bool) -> None:
+    if m.get("backend") == "omni":
+        return run_model_omni(m, score)
     log(f"── {m['name']} ({m['dir']}, loader={m.get('loader','auto')}) ──")
     write_profile(m, defaults)
     env = {**os.environ, "MODEL_DIR": m["dir"], "HOST_PORT": HOST_PORT,

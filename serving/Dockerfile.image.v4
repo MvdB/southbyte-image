@@ -1,0 +1,63 @@
+# southbyte-image Serving-Container v4 — fuer FLUX.3 [klein] (2026-10-20).
+#
+# Wie v3.1, nur mit einem neueren diffusers-Commit. FLUX.3 steckt in keinem
+# Release, sondern nur im Hauptzweig, und dort ausschliesslich als
+# ModularPipeline (Flux3DistilledModularPipeline / Flux3DistilledAutoBlocks).
+# Den Prompt-Upsampler als eigenen Block der Pipeline gibt es erst seit
+# PR #15058 (d42ebf9c6e0b, 16.10.2026).
+#
+# Gepinnt ist 4df4a5b35748 (PR #15073, 19.10.2026): der Commit gleicht die
+# Bildgroessen an die BFL-Referenz an. Fuer Text-zu-Bild bei 1024x1024 aendert
+# er nach seiner Beschreibung nichts — er betrifft Referenzbilder —, aber er ist
+# der juengste FLUX.3-Stand, und ein beweglicher Hauptzweig waere nicht
+# reproduzierbar.
+#
+# transformers wie v3.1 auf 5.17.0: der Upsampler (Qwen3.5-9B-Finetune) braucht
+# Qwen3_5ForConditionalGeneration, gespeichert ist er mit 5.8.1.
+#
+# v3 und v3.1 bleiben unangetastet, damit die Zahlen von Qwen-Image-2.1 und
+# -Turbo reproduzierbar bleiben. Die Registry waehlt das Image je Modell.
+#
+# Bau (vom Repo-Wurzelverzeichnis, mit Commit-Stempel):
+#   docker build -f serving/Dockerfile.image.v4 \
+#     --build-arg SOUTHBYTE_COMMIT="$(git rev-parse --short HEAD)" \
+#     -t spark-southbyte-image:v4 .
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN pip install --no-cache-dir \
+      "git+https://github.com/huggingface/diffusers@4df4a5b35748bab1d967c0ff49ad1a144d094322" \
+      "transformers==5.17.0" \
+      accelerate safetensors sentencepiece protobuf pyyaml \
+      fastapi "uvicorn[standard]" pydantic
+
+# Beleg im Image: fehlt eines davon, soll der Bau scheitern und nicht der Lauf.
+# Der Upsampler-Block ist der Grund fuer den Pin — ohne ihn waere v4 nur ein
+# teureres v3.1.
+RUN python -c "import diffusers, transformers; \
+from diffusers import ModularPipeline, Flux3Transformer2DModel, AutoencoderKLFlux2; \
+from diffusers import Flux3DistilledModularPipeline, Flux3DistilledAutoBlocks; \
+from transformers import Qwen3_5ForConditionalGeneration, Qwen3VLForConditionalGeneration; \
+blocks = Flux3DistilledAutoBlocks(); \
+assert 'prompt_upsampler' in blocks.sub_blocks, 'prompt_upsampler fehlt in Flux3DistilledAutoBlocks'; \
+print('v4 ok: diffusers', diffusers.__version__, 'transformers', transformers.__version__, \
+'| Bloecke:', list(blocks.sub_blocks))"
+
+COPY serving/server_image.py serving/loaders.py /opt/southbyte-image/
+WORKDIR /opt/southbyte-image
+
+# Auch der eigene Code gehoert geprueft: v2 trug einmal eine alte
+# server_image.py (27.09.), der Fix lag nur im Repo.
+RUN python -c "import loaders; assert 'flux3_modular' in loaders.LOADERS, 'Loader flux3_modular fehlt'; \
+print('Loader:', list(loaders.LOADERS))"
+
+# Commit-Stempel zuletzt, damit ein neuer Commit die pip-Schichten nicht neu baut.
+ARG SOUTHBYTE_COMMIT=""
+ENV SOUTHBYTE_COMMIT=${SOUTHBYTE_COMMIT}
+LABEL de.southbyte.commit=${SOUTHBYTE_COMMIT}
+
+EXPOSE 8010
+CMD ["python", "server_image.py"]

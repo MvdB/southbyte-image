@@ -48,11 +48,45 @@ def load_testset(path: Path) -> list[dict]:
     return cases
 
 
+# Felder, die der Server nur bei Prompt-Upsampler liefert (FLUX.3).
+_UPSAMPLER_FELDER = ("revised_prompt", "upsample_seconds", "upsample_tokens")
+
+
+def hochsetzen(args, prompt: str) -> tuple[str, float, int]:
+    """Prompt-Upsampler als eigener Dienst (FLUX.3 klein über vLLM-Omni, Rezept).
+    Aufruf nach der Modellkarte von flux-3-image-klein-pup: Systemprompt „t2i“
+    aus system_prompts.json, gierig mit top_p 0,95, top_k 20 und presence
+    penalty 1,5, höchstens 3584 Token, Denken aus. Gibt den umgeschriebenen
+    Prompt, die Dauer und die Zahl der erzeugten Token zurück."""
+    system = json.loads(Path(args.upsampler_system).read_text(encoding="utf-8"))["t2i"]
+    body = {
+        "model": args.upsampler_model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "temperature": 0.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5, "max_tokens": 3584,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    req = urllib.request.Request(
+        args.upsampler.rstrip("/") + "/v1/chat/completions",
+        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"},
+    )
+    t0 = time.perf_counter()
+    with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+        antwort = json.loads(resp.read())
+    text = (antwort["choices"][0]["message"].get("content") or "").strip()
+    if not text:
+        raise RuntimeError("Upsampler lieferte keinen Text")
+    return text, round(time.perf_counter() - t0, 2), int(antwort["usage"]["completion_tokens"])
+
+
 def generate_one(endpoint: str, case: dict, args) -> dict:
     """Ein Bild rendern; gibt PNG-Bytes + Timing zurück (oder Fehler)."""
+    prompt, hoch = case["prompt"], None
+    if args.upsampler:
+        hoch = hochsetzen(args, prompt)
+        prompt = hoch[0]
     payload = {
-        "prompt": case["prompt"],
-        "negative_prompt": case.get("negative_prompt"),
+        "prompt": prompt,
+        "negative_prompt": None if args.ohne_negativ else case.get("negative_prompt"),
         "n": 1,
         "response_format": "b64_json",
         "size": args.size,
@@ -71,7 +105,20 @@ def generate_one(endpoint: str, case: dict, args) -> dict:
         body = json.loads(resp.read())
     dt = time.perf_counter() - t0
     png = base64.b64decode(body["data"][0]["b64_json"])
-    return {"png": png, "gen_seconds": body.get("gen_seconds", round(dt, 2))}
+    erg = {"png": png, "gen_seconds": body.get("gen_seconds", round(dt, 2))}
+    if hoch:  # Upsampler als eigener Dienst: gen_seconds umfasst ihn wie im diffusers-Weg
+        erg.update(revised_prompt=hoch[0], upsample_seconds=hoch[1], upsample_tokens=hoch[2])
+        erg["gen_seconds"] = round(erg["gen_seconds"] + hoch[1], 2)
+    # Nur bei Pipelines mit Prompt-Upsampler (FLUX.3): der Text, den das
+    # Bildmodell tatsaechlich bekam, und was der Upsampler gekostet hat.
+    # gen_seconds bleibt die Gesamtzeit, der Upsampler ist darin enthalten.
+    revised = body["data"][0].get("revised_prompt")
+    if revised:
+        erg["revised_prompt"] = revised
+    for feld in _UPSAMPLER_FELDER[1:]:
+        if body.get(feld) is not None:
+            erg[feld] = body[feld]
+    return erg
 
 
 def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
@@ -101,7 +148,11 @@ def phase_generate(cases: list[dict], run_dir: Path, args) -> list[dict]:
                     else:
                         ohne_kennzeichen.append(fn)
                     rec.update(image=f"img/{fn}", gen_seconds=g["gen_seconds"])
-                    print(f"  ✓ {case['id']}{suffix}  {g['gen_seconds']}s")
+                    rec.update({k: g[k] for k in _UPSAMPLER_FELDER if k in g})
+                    extra = (f"  (Upsampler {g['upsample_seconds']}s, "
+                             f"{g.get('upsample_tokens', '?')} Tokens)"
+                             if "upsample_seconds" in g else "")
+                    print(f"  ✓ {case['id']}{suffix}  {g['gen_seconds']}s{extra}")
                 except Exception as e:  # noqa: BLE001 — Ausfall eines Falls kippt den Lauf nicht
                     rec.update(image=None, gen_seconds=None, error=str(e))
                     print(f"  ✗ {case['id']}{suffix}  {e}")
@@ -160,6 +211,13 @@ def summarize(records: list[dict], run_dir: Path, args) -> dict:
         "text_rendering_exact_rate": round(sum(exacts) / len(exacts), 3) if exacts else None,
         "adherence_score_mean": round(statistics.mean(adh), 3) if adh else None,
     }
+    # Nur bei Prompt-Upsampler (FLUX.3). Die Tokens als Maximum, nicht als
+    # Mittel: entscheidend ist, ob ein Fall an max_new_tokens (3584) stiess und
+    # die Beschreibung damit abgeschnitten war.
+    ups = [r["upsample_seconds"] for r in records if r.get("upsample_seconds") is not None]
+    if ups:
+        summary["upsample_seconds_mean"] = round(statistics.mean(ups), 2)
+        summary["upsample_tokens_max"] = max(int(r.get("upsample_tokens") or 0) for r in records)
     (run_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
@@ -178,6 +236,11 @@ def main() -> int:
     ap.add_argument("--guidance", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--upsampler", help="Prompt-Upsampler als eigener Dienst (chat/completions)")
+    ap.add_argument("--upsampler-model", default="")
+    ap.add_argument("--upsampler-system", help="system_prompts.json des Upsamplers")
+    ap.add_argument("--ohne-negativ", action="store_true",
+                    help="keinen Negativ-Prompt senden (Modelle, die ihn ablehnen)")
     ap.add_argument("--score-only", action="store_true",
                     help="nicht neu generieren, letzten Lauf dieses Modells bewerten")
     ap.add_argument("--ocr-endpoint")
