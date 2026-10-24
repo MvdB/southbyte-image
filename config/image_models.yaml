@@ -93,7 +93,7 @@ models:
       image: "vllm/vllm-openai:v0.29.0"                # laut Rezept
     negative_prompt: false       # das Distillat lehnt negative_prompt und guidance_scale ab (Rezept)
     size: "1024x1024"
-    active: false                # auf true nach dem ersten Lauf
+    active: true                 # 2026-10-24 gemessen
     notes: "FLUX 3 Image Klein, 5,6B-Transformer, Text-Encoder Qwen3-VL-4B, VAE aus FLUX.2; Distillat mit fester 16-Schritt-Folge ohne Guidance. Laeuft nach dem REZEPT ueber vLLM-Omni (vllm/vllm-omni:flux-3-image-klein), Schritte und Guidance setzt das Modell selbst. UPSAMPLER flux-3-image-klein-pup laut Rezept als eigener Dienst (vLLM v0.29.0); Aufruf nach seiner Karte: Systemprompt t2i aus system_prompts.json, gierig, top_p 0,95, top_k 20, presence_penalty 1,5, hoechstens 3584 Token, Denken aus. Der umgeschriebene Prompt steht je Fall als revised_prompt in den Ergebnissen, die Upsampler-Zeit als upsample_seconds; gen_seconds enthaelt sie. Der Upsampler schreibt Englisch, zitierter Text behaelt seine Sprache, bewertet wird gegen den deutschen Original-Prompt. LIZENZ: FLUX Kommunity License v1.0, nicht-kommerziell erlaubt; kommerzielle Nutzung der Bilder nur fuer Qualifying User unter 5 Mio. US-Dollar Jahresumsatz, dann mit Inhaltsfilter oder Pruefung vor Veroeffentlichung und KI-Kennzeichnung, soweit gesetzlich verlangt. Upsampler Apache-2.0, Text-Encoder Apache-2.0."
 
   # --- brauchen v2-Image ---
