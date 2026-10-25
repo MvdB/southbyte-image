@@ -7,7 +7,7 @@ Ein Modell hinzufügen = **Profil/Config-Eintrag + Loader-Namen** — kein Code.
 
 | # | Teil | Datei |
 |---|------|-------|
-| ① | Serving-Image (alle Deps) | `serving/Dockerfile.image` (v1) · `.v2` (+ mage_flow/nunchaku/bnb) · `.v2.1` (= v2 + aktueller Servercode) · `.v3` (Qwen-Image-2.1) · `.v3.1` (Qwen-Image-2.1-Turbo) · `.v4` (FLUX.3 [klein]) |
+| ① | Serving-Image (alle Deps) | `serving/Dockerfile.image` (v1) · `.v2` (+ mage_flow/nunchaku/bnb) · `.v2.1` (= v2 + aktueller Servercode) · `.v3` (Qwen-Image-2.1) · `.v3.1` (Qwen-Image-2.1-Turbo) · `.v4` (FLUX.3 [klein]) · `.v4.1` (+ bitsandbytes/outlines: ideogram-4, Krea-2) · `.hidream` (HiDream-O1: transformers 4.57.1 + Modellcode) |
 | ② | Loader-Registry | `serving/loaders.py` |
 | ③ | Serving-Adapter (OpenAI-Images-API) | `serving/server_image.py` · Start: `serving/run_image.sh` |
 | ③ | Profile (pro Modell) | `southbyte-spark-profiles/image/<dir>/image_profile.conf` |
@@ -93,6 +93,8 @@ md5sum serving/server_image.py
 | `mage_flow` | Mage-Flow (ext. Lib `mage_flow`) | **v2** (flash-attn) |
 | `flux2_singlefile` | FLUX.2-klein/-dev (NVFP4-Single-File + geteilte Komponenten) | **v2** (nunchaku/torchao) |
 | `flux3_modular` | FLUX.3 [klein] (ModularPipeline + Prompt-Upsampler aus `components_dir`) | **v4** |
+| `ideogram4` | ideogram-4 (NF4 + lokales Prompt-Upsampling, LM-Kopf aus `components_dir`) | **v4.1** |
+| `hidream_o1` | HiDream-O1-Image (eigener Modellcode, `/opt/hidream-o1`) | **hidream** |
 
 Ohne `PROFILE_LOADER` rät `loaders._autodetect()` aus `model_index.json`.
 
@@ -191,9 +193,28 @@ Datei).
 Vergleichsseite baut daraus einen sichtbaren Hinweis fuer alle Modelle mit
 nicht-kommerzieller Lizenz (`_NICHT_KOMMERZIELL` in `eval/make_docs.py`).
 Betroffen sind aktuell **FLUX.2-dev** und **Qwen-Image-2.1** (Qwen Research
-License, 2026-09-20: Nutzung nur fuer Forschung und Evaluation). Die
-Einschraenkung gilt auch fuer die erzeugten Bilder — dass die Messbilder
-trotzdem auf der Seite stehen, ist eine bewusste Entscheidung vom 22.09.2026.
+License, 2026-09-20: Nutzung nur fuer Forschung und Evaluation), dazu **ideogram-4**. Seit 25.10.
+hat jede Lizenz ihren eigenen, am Lizenztext geprueften Satz, denn die
+Lizenzen regeln die Ausgaben verschieden:
+
+- **Qwen Research:** keine eigene Regel fuer die Ausgaben, die Einschraenkung
+  gilt deshalb auch fuer die Bilder. Dass die Messbilder trotzdem auf der Seite
+  stehen, ist eine bewusste Entscheidung vom 22.09.2026.
+- **FLUX.2-dev:** das Modell nur nicht-kommerziell, die Ausgaben ausdruecklich
+  "for any purpose (including for commercial purposes)" — ausser zum Training
+  konkurrierender Modelle, und mit Inhaltsfilter oder Pruefung sowie
+  KI-Kennzeichnung. Der fruehere Satz "gilt auch fuer die Bilder" war hier falsch.
+- **ideogram-4:** nur nicht-kommerziell, Unternehmen nur Test und Evaluation in
+  nicht-produktiver Umgebung, und ausdruecklich keine Ausgaben, um umsatzbringende
+  Produkte oder Dienste zu bewerben. Die Bilder stehen mit diesem Hinweis in der
+  Galerie (Entscheidung vom 25.10.2026: Vergleich aktueller Modelle, kein
+  kommerzieller Zweck). Der Schalter `galerie: false` in der Registry zeigte nur
+  die Messwerte, die Bilder weder als Raster noch als Datei.
+
+Eine Lizenzkennung, die weder in `_OHNE_HINWEIS` noch in einer der beiden
+Klassen steht, bricht den Seitenbau ab (rc=1, keine Datei) — eine neue Lizenz
+faellt sonst stumm durch alle Hinweise. Dasselbe prueft `pruefe_metadaten` in
+southbyte-results fuer die Bildtabelle.
 
 **FLUX.3 [klein]** steht unter der FLUX Kommunity License v1.0 (`flux-kommunity`)
 und bekommt einen eigenen Hinweis (`_MIT_BEDINGUNGEN`): nicht-kommerzielle
@@ -208,6 +229,60 @@ Beim Nachtragen in `models.yaml`: **kein Kommentar hinter dem Wert.** Die
 Parser in `eval/make_docs.py` und `southbyte-results/feeds.py` lesen die Zeile
 mit einem regulaeren Ausdruck, der an `#` abbricht — die Lizenz erscheint dann
 als „—" auf der Seite.
+
+## Vier Modelle vom 25.10.2026: was jeweils anders ist
+
+**Krea-2-Turbo** (`diffusion`, v4.1): Destillat, 8 Schritte, `guidance 0.0` —
+CFG aus, den Negativ-Prompt ignoriert die Pipeline dann. Krea-Lizenz mit eigenem
+Hinweis (`_MIT_BEDINGUNGEN`): kommerziell nur unter 1 Mio. US-Dollar Umsatz,
+Inhaltsfilter bei jedem Einsatz (Pruefung durch Menschen genuegt) — die Bilder
+also vor dem Commit von `docs/img/` ansehen.
+
+**ideogram-4** (`ideogram4`, v4.1): erwartet seine strukturierte JSON-Beschreibung.
+Die gehostete Magic-Prompt-API ist ausgeschlossen, die Testprompts verlassen die
+Maschine nicht; lokal schreibt der Text-Encoder mit dem LM-Kopf
+`diffusers/qwen3-vl-8b-instruct-lm-head` um, JSON-gebunden ueber `outlines`. Die
+Guidance ist ein Plan je Schritt (45 × 7,0, 3 × 3,0) — `guidance: none` in der
+Registry, damit der Server keinen `guidance_scale` daneben setzt (die Pipeline
+lehnt beides zusammen ab), und `steps: 48`, weil die Planlaenge daran haengt.
+Fehlt der LM-Kopf, gibt es die Ersatzzeile `ideogram-4-ohne-Upsampling`
+(`active: false`); ihre Zahlen gehoeren nicht neben die mit Upsampling.
+
+Falle: `ideogram-ai/ideogram-4-nf4` ist NICHT die diffusers-Fassung, obwohl es eine
+`model_index.json` traegt. Seine Transformer speichern die Attention fusioniert
+(`attention.qkv`, `attention.o`); `Ideogram4Transformer2DModel` erwartet `to_q`, `to_k`,
+`to_v`, `to_out` — 136 Parameter bleiben auf `meta`, der Start bricht mit "Cannot copy
+out of meta tensor" ab (25.10.). Die diffusers-Fassung ist
+`ideogram-ai/ideogram-4-nf4-diffusers` (so auch im diffusers-Beispiel der Karte);
+nachrechnen geht nicht, die Gewichte sind NF4-quantisiert.
+
+**Ming-Image-0.1-Design** (vLLM-Omni, `vllm/vllm-omni:v0.30.0`): nach dem Rezept
+im vLLM-Omni-Repo zweistufig mit `--deploy-config`, die Registry reicht sie ueber
+`omni_args` an `serving/run_omni.sh`; beide Stufen auf der einen GPU
+(`serving/omni/ming_image_einzel.yaml`, Anteile 0,35 und 0,30). Bilder kommen ueber
+chat/completions mit `modalities: ["image"]` (`api: chat`, `image_eval.py --api chat`),
+nicht ueber `/v1/images/generations`.
+
+Falle: Das Modell-Repo bekam am 2026-10-14 eine `config.json` im Wurzelverzeichnis
+("Hub download tracking"). Mit ihr haelt vLLM-Omni die Sprachstufe fuer das Modell
+und laedt die Diffusionsstufe ueber die Z-Image-Pipeline — Abbruch beim Laden mit
+`Attempted to load weight (384) into parameter (64)` (VAE-Gewichte), in v0.30.0 und
+v0.32.0rc1 gleich. `ausblenden: ["config.json"]` in der Registry laesst
+`run_omni.sh` eine Ansicht aus Verweisen ohne diese Datei einhaengen
+(`results/_ansichten/`); dann greift `MingImageDiffusionPipeline`. Der Modellordner
+bleibt, wie ihn der Sync liefert. Gemessen am 25.10. mit v0.30.0, dem Stand des
+Rezepts (vLLM-Omni-Commit 6daf5b30f vom 23.09.).
+
+**HiDream-O1-Image-Dev** (`hidream_o1`, Image `hidream`): eigener Pixel-DiT auf
+Qwen3-VL, Code von HiDream (MIT, gepinnt). Rendert immer **2048x2048** — der Code
+rastet auf seine Formatliste ein, ein 1024er-Format gibt es nicht; die Zeiten
+sind deshalb nicht mit den 1024er-Laeufen vergleichbar. Der Prompt-Refiner der
+Referenz (Prompt-Refine, Gemma-4-31B, ~59 GB) laeuft **vorab**: der Orchestrator
+startet ihn (`refiner:` in der Registry), `eval/prompts_vorab.py` schreibt im
+HiDream-Image mit dem Agenten der Referenz alle Faelle um, dann stoppt der
+Refiner und erst danach laedt das Bildmodell. `image_eval.py --vorab` nimmt die
+Texte, rechnet die Refiner-Zeit in `gen_seconds` ein und vermerkt Rueckfaelle
+auf den Originalprompt (`vorab_fallback`).
 
 ## Ein Lauf ohne Bild ist ein Fehler
 

@@ -79,6 +79,20 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%F %T')}] {msg}", flush=True)
 
 
+def log_sichern(container: str, name: str) -> None:
+    """Vollen Log eines fehlgestarteten Containers sichern.
+
+    Der Container wird danach entfernt, und die letzten Zeilen allein zeigen die
+    Ursache selten — bei Ming-Image am 25.10.2026 stand dort nur die Folgemeldung
+    des Orchestrators. Ablage unter results/_fehlstarts/ (nicht im Repo).
+    """
+    ziel = REPO / "results" / "_fehlstarts" / f"{time.strftime('%Y-%m-%d_%H%M')}_{name}_{container}.log"
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    with ziel.open("wb") as f:
+        subprocess.run(["docker", "logs", container], stdout=f, stderr=subprocess.STDOUT)
+    log(f"Voller Log: {ziel.relative_to(REPO)}")
+
+
 def write_profile(m: dict, defaults: dict) -> None:
     """Schreibt image_profile.conf aus der Config (Config = Source of Truth)."""
     d = PROFILES / m["dir"]
@@ -87,14 +101,15 @@ def write_profile(m: dict, defaults: dict) -> None:
         f"# auto-generiert aus config/image_models.yaml — {m['name']}",
         f"PROFILE_LOADER={m.get('loader', 'auto')}",
         f"PROFILE_STEPS={m.get('steps', 20)}",
-        f"PROFILE_GUIDANCE={m.get('guidance', 3.5)}",
+        # None/"none": die Pipeline behaelt ihre eigene Guidance (ideogram-4: Plan je Schritt).
+        f"PROFILE_GUIDANCE={'none' if m.get('guidance', 3.5) in (None, 'none') else m.get('guidance', 3.5)}",
         f"PROFILE_SIZE={m.get('size', defaults.get('size', '1024x1024'))}",
         f"PROFILE_DTYPE={m.get('dtype', defaults.get('dtype', 'bfloat16'))}",
     ]
     if m.get("components_dir"):
         lines.append(f"PROFILE_COMPONENTS_DIR={m['components_dir']}")
-    # Nur FLUX.3 kennt den Schalter (Loader flux3_modular); ohne Eintrag in der
-    # Registry entscheidet der Loader, und der laesst den Upsampler an.
+    # Nur FLUX.3 und ideogram-4 kennen den Schalter (Loader flux3_modular, ideogram4);
+    # ohne Eintrag in der Registry entscheidet der Loader, und der laesst ihn an.
     if "prompt_upsampler" in m:
         lines.append(f"PROFILE_PROMPT_UPSAMPLER={1 if m['prompt_upsampler'] else 0}")
     if m.get("notes"):
@@ -162,7 +177,11 @@ def run_model_omni(m: dict, score: bool) -> None:
     hoch = m.get("upsampler") or {}
     log(f"── {m['name']} ({m['dir']}, vLLM-Omni{', Upsampler ' + hoch['dir'] if hoch else ''}) ──")
     env = {**os.environ, "MODEL_DIR": m["dir"], "HOST_PORT": HOST_PORT, "CONTAINER_NAME": CONTAINER,
-           "IMAGE": m["image"], "SERVED_NAME": m["name"], "PUP_DIR": hoch.get("dir", "")}
+           "IMAGE": m["image"], "SERVED_NAME": m["name"], "PUP_DIR": hoch.get("dir", ""),
+           # Zusatzargumente fuer vllm serve, etwa die Deploy-Config von Ming-Image.
+           "OMNI_ARGS": json.dumps(m.get("omni_args") or []),
+           # Eintraege des Modellordners, die vLLM-Omni nicht sehen soll (run_omni.sh).
+           "MODEL_AUSBLENDEN": " ".join(m.get("ausblenden") or [])}
     if hoch.get("image"):
         env["PUP_IMAGE"] = hoch["image"]
     try:
@@ -170,6 +189,7 @@ def run_model_omni(m: dict, score: bool) -> None:
             log(f"FEHLER Start {m['name']} — übersprungen"); return
         if not bereit(f"http://localhost:{HOST_PORT}/v1/models", CONTAINER):
             log(f"FEHLER {m['name']} nicht bereit — übersprungen")
+            log_sichern(CONTAINER, m["name"])
             subprocess.run(["docker", "logs", "--tail", "15", CONTAINER]); return
         testset = m.get("testset", "testset/image_de_v2.jsonl")
         cmd = [sys.executable, str(REPO / "eval/image_eval.py"),
@@ -179,6 +199,11 @@ def run_model_omni(m: dict, score: bool) -> None:
             cmd += ["--size", m["size"]]
         if m.get("negative_prompt") is False:
             cmd += ["--ohne-negativ"]
+        if m.get("api") == "chat":  # Ming-Image: Bilder ueber chat/completions (Rezept)
+            cmd += ["--api", "chat"]
+            for feld, flag in (("steps", "--steps"), ("guidance", "--guidance")):
+                if m.get(feld) is not None:
+                    cmd += [flag, str(m[feld])]
         if hoch:
             modelle = Path(os.environ.get("HF_MODELS_DIR", Path.home() / "hf_models"))
             cmd += ["--upsampler", f"http://localhost:{os.environ.get('PUP_PORT', '8014')}",
@@ -194,10 +219,59 @@ def run_model_omni(m: dict, score: bool) -> None:
     log(f"{m['name']} fertig, Container gestoppt")
 
 
+REFINE_PORT = os.environ.get("REFINE_PORT", "8014")
+
+
+def refiner_vorab(m: dict, testset: str) -> Path | None:
+    """Prompt-Refiner VOR dem Bildmodell: starten, alle Faelle umschreiben, stoppen.
+
+    Fuer Modelle, deren Refiner nicht neben dem Bildmodell in den Speicher passt
+    (HiDream-O1 mit Prompt-Refine, ~59 GB). Umgeschrieben wird im Image des
+    Bildmodells, weil dort der Prompt-Agent der Referenz liegt
+    (eval/prompts_vorab.py). Gibt die JSONL-Datei zurueck oder None bei Fehler.
+    """
+    r = m["refiner"]
+    name = f"{CONTAINER}-refine"
+    modelle = Path(os.environ.get("HF_MODELS_DIR", Path.home() / "hf_models"))
+    ziel = REPO / "results" / "_vorab" / f"{time.strftime('%Y-%m-%d_%H%M')}_{m['name']}.jsonl"
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    log(f"Refiner {r['dir']} startet ({r['image']}, :{REFINE_PORT})")
+    start = ["docker", "run", "-d", "--name", name, "--gpus", "all", "--ipc=host",
+             "-p", f"{REFINE_PORT}:8000", "-v", f"{modelle}:/hf_models:ro", "-e", "HF_HUB_OFFLINE=1",
+             r["image"], "--model", f"/hf_models/{r['dir']}", "--served-model-name", r["dir"],
+             "--gpu-memory-utilization", str(r.get("gpu_anteil", 0.8)), *[str(a) for a in r.get("args", [])]]
+    try:
+        if subprocess.run(start, capture_output=True).returncode != 0:
+            log("FEHLER Refiner-Start"); return None
+        if not bereit(f"http://localhost:{REFINE_PORT}/v1/models", name):
+            log("FEHLER Refiner nicht bereit")
+            log_sichern(name, "refiner")
+            subprocess.run(["docker", "logs", "--tail", "15", name]); return None
+        lauf = subprocess.run(
+            ["docker", "run", "--rm", "--network", "host", "--user", f"{os.getuid()}:{os.getgid()}",
+             "-v", f"{REPO / 'testset'}:/testset:ro", "-v", f"{ziel.parent}:/out",
+             m["image"], "python", "prompts_vorab.py",
+             "--testset", f"/testset/{Path(testset).name}", "--base-url", f"http://localhost:{REFINE_PORT}/v1",
+             "--model", r["dir"], "--out", f"/out/{ziel.name}"])
+        if lauf.returncode != 0 or not ziel.exists():
+            log("FEHLER Vorab-Umschreiben (alle Faelle Rueckfall oder Abbruch)"); return None
+        return ziel
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        log("Refiner gestoppt")
+
+
 def run_model(m: dict, defaults: dict, score: bool) -> None:
     if m.get("backend") == "omni":
         return run_model_omni(m, score)
     log(f"── {m['name']} ({m['dir']}, loader={m.get('loader','auto')}) ──")
+    testset = m.get("testset", defaults.get("testset", "testset/image_de_v1.jsonl"))
+    vorab = None
+    if m.get("refiner"):
+        vorab = refiner_vorab(m, testset)
+        if vorab is None:
+            log(f"FEHLER {m['name']}: ohne Refiner kein Lauf — übersprungen"); return
     write_profile(m, defaults)
     env = {**os.environ, "MODEL_DIR": m["dir"], "HOST_PORT": HOST_PORT,
            "CONTAINER_NAME": CONTAINER, "IMAGE": m.get("image", defaults.get("image"))}
@@ -206,13 +280,15 @@ def run_model(m: dict, defaults: dict, score: bool) -> None:
         log(f"FEHLER Start {m['name']} (rc={r.returncode}) — übersprungen"); return
     if not wait_health():
         log(f"FEHLER {m['name']} nicht healthy — übersprungen")
+        log_sichern(CONTAINER, m["name"])
         subprocess.run(["docker", "logs", "--tail", "8", CONTAINER])
         subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True); return
 
-    testset = m.get("testset", defaults.get("testset", "testset/image_de_v1.jsonl"))
     cmd = [sys.executable, str(REPO / "eval/image_eval.py"),
            "--endpoint", f"http://localhost:{HOST_PORT}", "--model-name", m["name"],
            "--testset", str(REPO / testset)]
+    if vorab:
+        cmd += ["--vorab", str(vorab)]
     if score:
         cmd += ["--judge-endpoint", JUDGE_ENDPOINT, "--judge-model", JUDGE_MODEL,
                 "--ocr-endpoint", JUDGE_ENDPOINT, "--ocr-model", JUDGE_MODEL]
