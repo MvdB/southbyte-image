@@ -1,0 +1,58 @@
+# Ming-Image auf EINER GPU (DGX Spark, GB10) — abgeleitet aus
+# vllm_omni/deploy/ming_image.yaml in vllm/vllm-omni:v0.32.0rc1 (2026-10-25).
+#
+# Das Rezept (recipes/inclusionAI/Ming-Image.md) faehrt die zwei Stufen auf zwei
+# GPUs (devices "0" und "1", 2x H100, "1xH100 to be validated"). Der GB10 hat
+# eine. Geaendert ist deshalb nur die Verteilung, wie in den *_single_gpu-
+# Configs des Images: beide Stufen auf devices "0", jede mit eigenem Anteil.
+#   Stufe 0: Qwen2.5-VL-Sichtteil + BailingMoeV2 (mllm/, 32 GB), max. 1 Sequenz
+#            und 1 Ausgabetoken → 0,35 (~45 GB) statt 0,55 einer eigenen GPU.
+#   Stufe 1: Z-Image-DiT (12 GB) + Connector (5,8 GB) + VAE, Aktivierungen bei
+#            1024x1024 → 0,30 (~38 GB); ohne Angabe nimmt die Diffusionsstufe 0,9.
+# Alles andere ist unveraendert.
+pipeline: ming_image
+async_chunk: false
+
+trust_remote_code: false
+distributed_executor_backend: mp
+dtype: bfloat16
+enable_prefix_caching: false
+
+stages:
+  - stage_id: 0
+    enforce_eager: true
+    tensor_parallel_size: 1
+    devices: "0"
+    gpu_memory_utilization: 0.35
+    max_num_seqs: 1
+    output_connectors:
+      to_stage_1: shared_memory_connector
+    default_sampling_params:
+      max_tokens: 1
+      temperature: 0
+      seed: 42
+
+  - stage_id: 1
+    enforce_eager: false
+    diffusion_compile_granularity: regional
+    diffusion_compile_dynamic: true
+    tensor_parallel_size: 1
+    devices: "0"
+    gpu_memory_utilization: 0.30
+    max_num_seqs: 1
+    input_connectors:
+      from_stage_0: shared_memory_connector
+    default_sampling_params:
+      seed: 42
+
+connectors:
+  shared_memory_connector:
+    name: SharedMemoryConnector
+
+edges:
+  - from: 0
+    to: 1
+    window_size: -1
+    max_inflight: 1
+
+platforms: {}

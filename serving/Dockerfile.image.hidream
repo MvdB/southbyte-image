@@ -1,0 +1,64 @@
+# southbyte-image Serving-Container fuer HiDream-O1-Image (2026-10-25).
+#
+# HiDream-O1 ist keine diffusers-Pipeline, sondern ein eigener Pixel-DiT auf
+# Qwen3-VL-Basis mit eigenem Modellcode (github.com/HiDream-ai/HiDream-O1-Image,
+# Zweig dev, MIT). Der Code verlangt transformers==4.57.1 — mit den 5.x-Staenden
+# der Images v3/v4 ist er unvereinbar, deshalb ein eigenes Image auf derselben
+# NGC-Basis.
+#
+# Gepinnt ist der Code auf 3237a63 (15.05.2026, juengster Stand von dev am
+# 25.10.). flash-attn bringt die NGC-Basis mit (2.7.4.post1); der Modellcode
+# nutzt es fest verdrahtet (pipeline.py, "use_flash_attn": True). Der Patch
+# unten macht das nur schaltbar — Standard bleibt an, wie in der Referenz;
+# HIDREAM_FLASH_ATTN=0 schaltet auf den Weg ohne flash-attn, den die README
+# fuer Systeme ohne das Paket beschreibt.
+#
+# openai braucht der Prompt-Agent (prompt_agent_v2.py), den eval/prompts_vorab.py
+# in diesem Image gegen den Prompt-Refine-Dienst aufruft.
+#
+# Bau (vom Repo-Wurzelverzeichnis, mit Commit-Stempel):
+#   docker build -f serving/Dockerfile.image.hidream \
+#     --build-arg SOUTHBYTE_COMMIT="$(git rev-parse --short HEAD)" \
+#     -t spark-southbyte-image:hidream .
+FROM nvcr.io/nvidia/pytorch:26.06-py3
+
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN pip list --format=freeze 2>/dev/null | grep -iE '^(torch|torchvision|numpy|flash.attn)( @|==)' > /tmp/gebunden.txt \
+ && pip install --no-cache-dir -c /tmp/gebunden.txt \
+      "transformers==4.57.1" "diffusers==0.38.0" accelerate safetensors sentencepiece \
+      einops scipy tqdm openai fastapi "uvicorn[standard]" pydantic pyyaml \
+ && pip list --format=freeze 2>/dev/null | grep -iE '^(torch|torchvision|numpy|flash.attn)( @|==)' | diff /tmp/gebunden.txt - \
+ && echo "hidream: torch und flash-attn unveraendert"
+
+ARG HIDREAM_COMMIT=3237a63
+RUN git clone -q -b dev https://github.com/HiDream-ai/HiDream-O1-Image.git /opt/hidream-o1 \
+ && git -C /opt/hidream-o1 checkout -q ${HIDREAM_COMMIT} \
+ && F=/opt/hidream-o1/models/pipeline.py \
+ && test "$(grep -c '"use_flash_attn": True,' "$F")" = 1 \
+ && sed -i '1i import os' "$F" \
+ && sed -i 's/"use_flash_attn": True,/"use_flash_attn": os.environ.get("HIDREAM_FLASH_ATTN", "1") != "0",/' "$F" \
+ && grep -q 'HIDREAM_FLASH_ATTN' "$F" \
+ && echo "hidream: Code $(git -C /opt/hidream-o1 rev-parse --short HEAD), flash-attn schaltbar"
+
+RUN cd /opt/hidream-o1 && python -c "import transformers, flash_attn, diffusers; \
+from models.qwen3_vl_transformers import Qwen3VLForConditionalGeneration; \
+from models.pipeline import generate_image, DEFAULT_TIMESTEPS; \
+from prompt_agent_v2 import refine_prompt, REWRITE_SYSTEM_PROMPT; \
+print('hidream ok: transformers', transformers.__version__, '| diffusers', diffusers.__version__, \
+'| flash_attn', flash_attn.__version__)"
+
+COPY serving/server_image.py serving/loaders.py eval/prompts_vorab.py /opt/southbyte-image/
+WORKDIR /opt/southbyte-image
+
+RUN python -c "import loaders; assert 'hidream_o1' in loaders.LOADERS, 'Loader hidream_o1 fehlt'; \
+print('Loader:', list(loaders.LOADERS))"
+
+ARG SOUTHBYTE_COMMIT=""
+ENV SOUTHBYTE_COMMIT=${SOUTHBYTE_COMMIT}
+LABEL de.southbyte.commit=${SOUTHBYTE_COMMIT}
+
+EXPOSE 8010
+CMD ["python", "server_image.py"]

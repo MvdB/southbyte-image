@@ -1,0 +1,50 @@
+# southbyte-image Serving-Container v4.1 — v4 plus bitsandbytes und outlines (2026-10-25).
+#
+# Warum ein Aufsatz auf v4: ideogram-4 liegt nur als NF4-Checkpoint vor
+# (quant_method bitsandbytes in transformer, unconditional_transformer und
+# text_encoder), und v4 hat kein bitsandbytes. Ideogram4Pipeline und
+# Krea2Pipeline stecken im diffusers-Pin von v4 schon drin (geprueft am
+# 25.10.); ein Neubau mit anderem Commit wuerde FLUX.3 [klein] anfassen.
+#
+# outlines braucht das lokale Prompt-Upsampling von ideogram-4: ohne das Paket
+# laeuft die Umschreibung in das strukturierte JSON-Format ungebunden und
+# liefert laut diffusers nicht sicher gueltiges JSON.
+#
+# Die Pakete werden gegen den Stand des Images gebunden (Constraints aus
+# pip list): weder torch aus dem NGC-Image noch transformers 5.17.0 oder der
+# diffusers-Pin duerfen dabei ersetzt werden. bitsandbytes 0.50.0 ist dieselbe
+# Version, mit der FLUX.2-dev-bnb4 im v2-Image auf derselben NGC-Basis laeuft.
+#
+# Bau (vom Repo-Wurzelverzeichnis, mit Commit-Stempel):
+#   docker build -f serving/Dockerfile.image.v4.1 \
+#     --build-arg SOUTHBYTE_COMMIT="$(git rev-parse --short HEAD)" \
+#     -t spark-southbyte-image:v4.1 .
+FROM spark-southbyte-image:v4
+
+RUN pip list --format=freeze 2>/dev/null | grep -iE '^(torch|torchvision|transformers|diffusers|accelerate|numpy|safetensors)( @|==)' \
+      > /tmp/gebunden.txt \
+ && pip install --no-cache-dir -c /tmp/gebunden.txt "bitsandbytes==0.50.0" outlines \
+ && pip list --format=freeze 2>/dev/null | grep -iE '^(torch|torchvision|transformers|diffusers|accelerate|numpy|safetensors)( @|==)' \
+      | diff /tmp/gebunden.txt - \
+ && echo "v4.1: torch, transformers und diffusers unveraendert"
+
+RUN python -c "import bitsandbytes, outlines, diffusers, transformers; from importlib.metadata import version; \
+from diffusers import Ideogram4Pipeline, Ideogram4PromptEnhancerHead, Krea2Pipeline; \
+from diffusers.utils import is_outlines_available; \
+assert is_outlines_available(), 'diffusers erkennt outlines nicht'; \
+print('v4.1 ok: bitsandbytes', bitsandbytes.__version__, '| outlines', version('outlines'), \
+'| diffusers', diffusers.__version__, '| transformers', transformers.__version__)"
+
+COPY serving/server_image.py serving/loaders.py /opt/southbyte-image/
+WORKDIR /opt/southbyte-image
+
+RUN python -c "import loaders; \
+fehlt = {'flux3_modular', 'ideogram4'} - set(loaders.LOADERS); \
+assert not fehlt, f'Loader fehlen: {fehlt}'; print('Loader:', list(loaders.LOADERS))"
+
+ARG SOUTHBYTE_COMMIT=""
+ENV SOUTHBYTE_COMMIT=${SOUTHBYTE_COMMIT}
+LABEL de.southbyte.commit=${SOUTHBYTE_COMMIT}
+
+EXPOSE 8010
+CMD ["python", "server_image.py"]

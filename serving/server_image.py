@@ -14,7 +14,8 @@ Konfiguration per Env (Defaults kommen aus dem image_profile.conf, das run_image
 in Env-Variablen übersetzt):
   MODEL_DIR      Verzeichnisname unter /hf_models (z.B. black-forest-labs--FLUX.1-schnell)
   IMG_STEPS      num_inference_steps (Default 20)
-  IMG_GUIDANCE   guidance_scale bzw. true_cfg_scale (Default 3.5)
+  IMG_GUIDANCE   guidance_scale bzw. true_cfg_scale (Default 3.5); "none" = gar nicht
+                 setzen — fuer Pipelines mit eigenem Guidance-Plan (ideogram-4)
   IMG_KV_CACHE   1 = use_kv_cache an, wenn die Pipeline es kennt (Default 1)
   IMG_SIZE       WxH (Default 1024x1024)
   IMG_DTYPE      bfloat16|float16 (Default bfloat16)
@@ -47,7 +48,11 @@ MODEL_PATH = os.path.join(HF_ROOT, MODEL_DIR)
 SERVED_NAME = os.environ.get("SERVED_MODEL_NAME", MODEL_DIR)
 
 DEF_STEPS = int(os.environ.get("IMG_STEPS", "20"))
-DEF_GUIDANCE = float(os.environ.get("IMG_GUIDANCE", "3.5"))
+# "none": die Pipeline bekommt keinen Guidance-Wert und nimmt ihre eigene
+# Vorgabe. Ideogram4Pipeline etwa faehrt einen Plan je Schritt
+# (guidance_schedule) und lehnt guidance_scale daneben ab.
+_GUIDANCE_ROH = os.environ.get("IMG_GUIDANCE", "3.5").strip().lower()
+DEF_GUIDANCE = None if _GUIDANCE_ROH in ("", "none", "aus") else float(_GUIDANCE_ROH)
 KV_CACHE = os.environ.get("IMG_KV_CACHE", "1") not in ("0", "false", "False")
 DEF_W, DEF_H = (int(x) for x in os.environ.get("IMG_SIZE", "1024x1024").lower().split("x"))
 _DTYPES = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
@@ -57,7 +62,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # Version an genau dieser Stelle; der Commit kommt beim Bau als Bauargument
 # ins Image (SOUTHBYTE_COMMIT) und steht in /health dahinter. Ohne Stempel
 # steht die blanke Version da, nie ein erfundener Commit.
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 _COMMIT = os.environ.get("SOUTHBYTE_COMMIT", "").strip()
 VERSION_VOLL = f"{VERSION}+{_COMMIT}" if _COMMIT else VERSION
 
@@ -163,7 +168,9 @@ def generate(req: GenRequest) -> dict[str, Any]:
     # verwerfen, aber eine Warnzeile je Bild waere laestig.
     if KV_CACHE and "use_kv_cache" in sig_params:
         kwargs["use_kv_cache"] = True
-    if "true_cfg_scale" in sig_params:
+    if guidance is None:
+        pass  # Pipeline-Vorgabe (IMG_GUIDANCE=none)
+    elif "true_cfg_scale" in sig_params:
         kwargs["true_cfg_scale"] = guidance
     else:
         kwargs["guidance_scale"] = guidance

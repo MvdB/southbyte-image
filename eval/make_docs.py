@@ -49,18 +49,46 @@ _MODELS = _load_models()
 # gemeldet; leer ist der Normalfall.
 _OHNE_KENNZEICHEN: list[str] = []
 
-# Lizenzen, die eine kommerzielle Nutzung ausschliessen. Ein Modell mit so einer
-# Lizenz bekommt auf der Seite einen sichtbaren Hinweis — die gezeigten Bilder
-# sind seine Ausgaben, und die Einschraenkung gilt fuer sie mit.
+# Lizenzen, die eine kommerzielle Nutzung des MODELLS ausschliessen. Je Lizenz
+# ein eigener Text, gegen den Lizenztext geprueft: ob die Einschraenkung auch
+# fuer die erzeugten Bilder gilt, regeln die Lizenzen verschieden — FLUX.2-dev
+# gibt die Ausgaben ausdruecklich frei, Qwen Research sagt dazu nichts, und
+# ideogram-4 verbietet bestimmte Verwendungen der Ausgaben.
 _NICHT_KOMMERZIELL = {
-    "qwen-research": ("Qwen Research License", "https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE"),
-    "flux-2-dev-non-commercial": ("FLUX.2-dev Non-Commercial License",
-                                  "https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md"),
+    "qwen-research": (
+        "Qwen Research License", "https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE",
+        # "Non-Commercial" shall mean for research or evaluation purposes only;
+        # eine eigene Regel fuer die Ausgaben hat die Lizenz nicht.
+        ("Nutzung nur zu Forschungs- und Evaluationszwecken. Die hier gezeigten Bilder sind im Rahmen "
+         "dieser Evaluation entstanden; wer sie kommerziell nutzen will, braucht eine eigene Lizenz "
+         "von Qwen.")),
+    "flux-2-dev-non-commercial": (
+        "FLUX.2-dev Non-Commercial License",
+        "https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md",
+        # "You may use Output for any purpose (including for commercial purposes),
+        # except as expressly prohibited herein." Verboten: Training konkurrierender
+        # Modelle; Bedingung: Inhaltsfilter oder Pruefung, KI-Kennzeichnung.
+        ("Das Modell selbst darf nur nicht-kommerziell genutzt werden, von Unternehmen nur zum Testen und "
+         "Evaluieren in einer nicht-produktiven Umgebung. Die erzeugten Bilder duerfen laut Lizenz fuer "
+         "jeden Zweck genutzt werden, auch kommerziell — nicht aber zum Training eines konkurrierenden "
+         "Modells, und nur mit Inhaltsfilter oder Pruefung vor der Veroeffentlichung sowie einer "
+         "KI-Kennzeichnung, soweit das Gesetz sie verlangt.")),
+    "ideogram-4-non-commercial": (
+        "Ideogram Non-Commercial Model Agreement",
+        "https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md",
+        # Non-Commercial Purposes (ii): for-profit entity solely for testing,
+        # evaluation ... in a non-production environment; ausdruecklich keine
+        # Ausgaben, um umsatzbringende Produkte oder Dienste zu bewerben, und keine
+        # Ausgaben zum Training konkurrierender Modelle.
+        ("Das Modell darf nur fuer nicht-kommerzielle Zwecke genutzt werden, von Unternehmen nur zum "
+         "Testen und Evaluieren in einer nicht-produktiven Umgebung. Ausgaben duerfen nicht erzeugt werden, "
+         "um umsatzbringende Produkte oder Dienste darzustellen oder zu bewerben, und nicht zum Training "
+         "konkurrierender Modelle dienen. Die hier gezeigten Bilder sind im Rahmen dieser Evaluation "
+         "entstanden und dienen nur dem Vergleich der Modelle.")),
 }
 
 # Lizenzen, die kommerzielle Nutzung nicht ausschliessen, sondern an Bedingungen
-# knuepfen. Der Satz fuer die nicht-kommerziellen ("nur Forschung und
-# Evaluation") traefe sie nicht, deshalb ein eigener Hinweis mit eigenem Text.
+# knuepfen. Auch hier ein eigener Text je Lizenz.
 _MIT_BEDINGUNGEN = {
     "flux-kommunity": (
         "FLUX Kommunity License v1.0",
@@ -70,33 +98,44 @@ _MIT_BEDINGUNGEN = {
          "Unternehmen), und auch dann nur mit Inhaltsfilter oder Pruefung vor der Veroeffentlichung "
          "sowie einer KI-Kennzeichnung, soweit das Gesetz sie verlangt. Alles Weitere braucht eine "
          "Lizenz von Black Forest Labs.")),
+    "krea-2-community-license": (
+        "Krea 2 Community License v1",
+        # Die Datei im Modell-Repo ist gated; das ist der Link der Modellkarte, byte-gleich.
+        "https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf",
+        ("Nicht-kommerzielle Nutzung ist erlaubt. Modell und erzeugte Bilder kommerziell nutzen duerfen "
+         "nur Anwender mit weniger als 1 Mio. US-Dollar Jahresumsatz (einschliesslich verbundener "
+         "Unternehmen); darueber braucht es eine Enterprise-Lizenz von Krea. Fuer jeden Einsatz verlangt "
+         "die Lizenz Inhaltsfilter oder eine Pruefung durch Menschen, dazu eine KI-Kennzeichnung, soweit "
+         "Gesetz oder Plattform sie verlangen.")),
 }
 
+# Lizenzen, die weder Nutzung noch Ausgaben einschraenken: kein Hinweis noetig.
+# Jede andere Kennung muss oben eingeordnet sein, sonst entsteht keine Seite —
+# eine neue Lizenz faellt sonst stumm durch alle Hinweise.
+_OHNE_HINWEIS = {"apache-2.0", "mit"}
 
-def _lizenz_hinweis(namen: list[str]) -> str:
-    """Hinweisblock fuer alle gezeigten Modelle mit nicht-kommerzieller Lizenz
-    oder mit einer Lizenz, die kommerzielle Nutzung an Bedingungen knuepft."""
-    betroffen = []
-    bedingt = []
-    for n in namen:
-        lic = str(_MODELS.get(n, {}).get("license", "") or "")
-        if lic in _NICHT_KOMMERZIELL:
-            bez, url = _NICHT_KOMMERZIELL[lic]
-            betroffen.append(f'<strong>{html.escape(n)}</strong> — <a href="{url}" target="_blank" '
-                             f'rel="noopener">{html.escape(bez)}</a>')
-        elif lic in _MIT_BEDINGUNGEN:
-            bez, url, text = _MIT_BEDINGUNGEN[lic]
-            bedingt.append(f'<p class="hint lizenz"><strong>Lizenz mit Bedingungen:</strong> '
-                           f'<strong>{html.escape(n)}</strong> — <a href="{url}" target="_blank" '
-                           f'rel="noopener">{html.escape(bez)}</a>. {html.escape(text)}</p>')
+
+def _lizenz_hinweis(namen: list[str], ohne_galerie: set[str] = frozenset()) -> str:
+    """Hinweisblock je Lizenz fuer alle gezeigten Modelle mit nicht-kommerzieller
+    Lizenz oder mit einer Lizenz, die kommerzielle Nutzung an Bedingungen knuepft;
+    dazu ein Satz, wenn Bilder eines Modells nicht gezeigt werden."""
     teile = []
-    if betroffen:
-        teile.append('<p class="hint lizenz"><strong>Nicht-kommerzielle Lizenzen:</strong> '
-                     + " · ".join(betroffen)
-                     + '. Diese Modelle duerfen nur zu Forschungs- und Evaluationszwecken genutzt werden; '
-                       'die hier gezeigten Bilder sind im Rahmen dieser Evaluation entstanden. Wer sie '
-                       'kommerziell nutzen will, braucht eine eigene Lizenz des Anbieters.</p>')
-    return "\n".join(teile + bedingt)
+    for klasse, titel in ((_NICHT_KOMMERZIELL, "Nicht-kommerzielle Lizenz"),
+                          (_MIT_BEDINGUNGEN, "Lizenz mit Bedingungen")):
+        for lic, (bez, url, text) in klasse.items():
+            modelle = [n for n in namen if str(_MODELS.get(n, {}).get("license", "") or "") == lic]
+            if modelle:
+                teile.append(f'<p class="hint lizenz"><strong>{titel}:</strong> '
+                             + " · ".join(f"<strong>{html.escape(m)}</strong>" for m in modelle)
+                             + f' — <a href="{url}" target="_blank" rel="noopener">{html.escape(bez)}</a>. '
+                             f'{html.escape(text)}</p>')
+    versteckt = [n for n in namen if n in ohne_galerie]
+    if versteckt:
+        teile.append('<p class="hint lizenz"><strong>Ohne Bilder:</strong> '
+                     + " · ".join(f"<strong>{html.escape(m)}</strong>" for m in versteckt)
+                     + ' — die Bilder dieser Modelle werden hier wegen ihrer Lizenz nicht gezeigt; '
+                       'die Messwerte stehen in der Tabelle.</p>')
+    return "\n".join(teile)
 
 
 def _rel_cell(name: str) -> str:
@@ -179,6 +218,44 @@ def _load_dirs() -> dict:
     return out
 
 
+def _load_seitenhinweise() -> dict[str, str]:
+    """`seitenhinweis` je Modell aus image_models.yaml.
+
+    Fuer Abweichungen vom Kohortenaufbau, die neben den Zahlen stehen muessen,
+    etwa eine andere Aufloesung oder eine Vorstufe, deren Zeit in Ø Zeit/Bild
+    steckt (HiDream-O1: 2048x2048 und Prompt-Refine).
+    """
+    try:
+        import yaml
+        reg = yaml.safe_load(_CONFIG.read_text(encoding="utf-8")) or {}
+    except (OSError, ImportError, ValueError):
+        return {}
+    return {str(m["name"]): str(m["seitenhinweis"]) for m in reg.get("models", [])
+            if isinstance(m, dict) and m.get("seitenhinweis")}
+
+
+def _load_ohne_galerie() -> set[str]:
+    """Modelle mit `galerie: false` in image_models.yaml: Messwerte ja, Bilder nein.
+
+    Fuer Lizenzen, die bestimmte Verwendungen der Ausgaben verbieten (ideogram-4).
+    Die Bilder werden dann weder gezeigt noch nach docs/ kopiert.
+    """
+    out: set[str] = set()
+    try:
+        lines = _CONFIG.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    name = None
+    for ln in lines:
+        g = re.match(r'\s*-\s*name:\s*"?([^"#\n]+?)"?\s*$', ln)
+        if g:
+            name = g.group(1).strip()
+            continue
+        if name and re.match(r'\s+galerie:\s*(false|nein|aus)\b', ln, re.I):
+            out.add(name)
+    return out
+
+
 def _card_url(hf_dir: str) -> str:
     """owner--model → https://huggingface.co/owner/model."""
     return "https://huggingface.co/" + hf_dir.replace("--", "/", 1)
@@ -249,7 +326,14 @@ def build_html(runs: list[dict], docs: Path) -> str:
 
     # Galerie-Header: Modelle als Spalten, Name → Model-Card verlinkt
     head = "".join(f"<th>{_mlabel(r['summary']['model'])}</th>" for r in runs)
-    lizenz_hinweis = _lizenz_hinweis([r["summary"]["model"] for r in runs])
+    ohne_galerie = _load_ohne_galerie()
+    lizenz_hinweis = _lizenz_hinweis([r["summary"]["model"] for r in runs], ohne_galerie)
+    abw = _load_seitenhinweise()
+    gezeigt = [r["summary"]["model"] for r in runs if r["summary"]["model"] in abw]
+    if gezeigt:
+        lizenz_hinweis += ('\n<p class="hint"><strong>Abweichungen vom Kohortenaufbau:</strong> '
+                           + " · ".join(f"<strong>{html.escape(n)}</strong>: {html.escape(abw[n])}" for n in gezeigt)
+                           + "</p>")
     # Welcher Testsatz gemessen wurde, gehoert auf die Seite: v1 und v2 sind
     # nicht vergleichbar (v2 traegt Negativ-Prompts), und ohne die Angabe
     # stuenden Zahlen zweier Staende ununterscheidbar nebeneinander.
@@ -291,7 +375,16 @@ def build_html(runs: list[dict], docs: Path) -> str:
         cells = []
         for r in runs:
             rec = next((x for x in r["records"] if x["id"] == cid and x.get("repeat", 0) == 0), None)
-            if rec and rec.get("image"):
+            if rec and rec.get("image") and r["summary"]["model"] in ohne_galerie:
+                # Lizenz: nur die Messwerte, kein Bild und keine Kopie nach docs/.
+                werte = []
+                if rec.get("adherence", {}).get("score") is not None:
+                    werte.append(f"Treue {rec['adherence']['score']}")
+                if rec.get("text_rendering", {}).get("cer") is not None:
+                    werte.append(f"CER {rec['text_rendering']['cer']}")
+                cells.append(f'<td class="ohnebild"><div class="cap">Bild nicht gezeigt (Lizenz)'
+                             f'{" · " + html.escape(" · ".join(werte)) if werte else ""}</div></td>')
+            elif rec and rec.get("image"):
                 src_img = r["dir"] / rec["image"]
                 model = r["summary"]["model"]
                 name = Path(rec["image"]).name
@@ -420,6 +513,14 @@ def main() -> int:
         print(f"✗ Seite NICHT gebaut: in {_MODELS_YAML} fehlen Angaben fuer {'; '.join(fehlt)}.\n"
               f"  Erst das Modell dort eintragen (Lizenz an der LICENSE-Datei pruefen), dann neu bauen.",
               file=sys.stderr)
+        return 1
+    bekannt = _OHNE_HINWEIS | _NICHT_KOMMERZIELL.keys() | _MIT_BEDINGUNGEN.keys()
+    unbekannt = sorted({f"{r['summary']['model']} ({lic})" for r in runs
+                        if (lic := str(_MODELS[r["summary"]["model"]]["license"])) not in bekannt})
+    if unbekannt:
+        print(f"✗ Seite NICHT gebaut: Lizenz ohne Einordnung bei {'; '.join(unbekannt)}.\n"
+              f"  In eval/make_docs.py nach _OHNE_HINWEIS, _NICHT_KOMMERZIELL oder _MIT_BEDINGUNGEN "
+              f"eintragen (Lizenztext lesen), dann neu bauen.", file=sys.stderr)
         return 1
     (docs / "index.html").write_text(build_html(runs, docs), encoding="utf-8")
     print(f"✓ docs/index.html geschrieben ({len(runs)} Modell(e))")

@@ -12,6 +12,8 @@ Strategien
   mage_flow         from mage_flow import MageFlowPipeline   Mage-Flow (ext. Lib)
   flux2_singlefile  Flux2Pipeline + Single-File-NVFP4-Transformer  FLUX.2-klein/-dev
   flux3_modular     ModularPipeline + Prompt-Upsampler (lokal)   FLUX.3 [klein]
+  ideogram4         Ideogram4Pipeline (NF4) + lokales Upsampling  ideogram-4
+  hidream_o1        eigener Modellcode (HiDream-O1-Image)       HiDream-O1-Image-Dev
 
 `auto` und `diffusion` laufen im aktuellen Container (diffusers 0.38). `mage_flow`
 und `flux2_singlefile` brauchen das v2-Image (mage_flow-Paket bzw. nunchaku/torchao
@@ -19,7 +21,9 @@ für NVFP4) — der Code ist aber schon hier, damit ein neues Modell nur noch ei
 Profil + den Loader-Namen braucht.
 
 `flux3_modular` braucht das v4-Image: FLUX.3 steckt nur im diffusers-Hauptzweig
-und nur als ModularPipeline.
+und nur als ModularPipeline. `ideogram4` braucht v4.1 (bitsandbytes fuer den
+NF4-Checkpoint, outlines fuer das Upsampling), `hidream_o1` das eigene Image
+`hidream` (transformers 4.57.1 und der Modellcode von HiDream).
 """
 from __future__ import annotations
 
@@ -310,6 +314,178 @@ def _load_flux3_modular(model_path: str, dtype: Any, opts: dict) -> Any:
     return _Flux3ModularAdapter(pipe, upsampler)
 
 
+def _ein(opts: dict, schluessel: str, standard: str = "1") -> bool:
+    """Schalter aus den Profil-Optionen: 0/false/aus/nein/no/off heisst aus."""
+    return str(opts.get(schluessel) or standard).strip().lower() not in ("0", "false", "aus", "nein", "no", "off")
+
+
+def _verzeichnis(model_path: str, name: str) -> Path:
+    """Bloßer Verzeichnisname → relativ zum Modellspeicher (Parent von model_path)."""
+    return Path(name) if Path(name).is_absolute() else Path(model_path).parent / name
+
+
+class _Ideogram4Adapter:
+    """diffusers-kompatible Hülle um Ideogram4Pipeline mit lokalem Prompt-Upsampling.
+
+    ideogram-4 erwartet seine strukturierte JSON-Beschreibung als Prompt. Die
+    Modellkarte nennt zwei Wege dorthin: Ideograms gehostete Magic-Prompt-API —
+    fuer uns ausgeschlossen, die Testprompts verlassen die Maschine nicht — oder
+    das lokale Upsampling ueber den Text-Encoder (Qwen3-VL-8B) plus den
+    LM-Kopf `diffusers/qwen3-vl-8b-instruct-lm-head`, laut Karte mit etwas
+    Qualitaetsverlust gegenueber der API.
+
+    Die Hülle ruft `upsample_prompt` getrennt auf, statt `prompt_upsampling=True`
+    durchzureichen: so stehen der umgeschriebene Prompt, seine Dauer und seine
+    Tokenzahl in der Antwort, wie beim FLUX.3-Upsampler. Mit demselben Generator
+    wie das Bild bleibt das Sampling reproduzierbar (Temperatur 1,0 laut diffusers).
+
+    Ohne Upsampler bekommt das Modell den Prompt der Anfrage unverändert — das
+    ist nicht der vorgesehene Betrieb und gehoert so gekennzeichnet.
+    """
+
+    def __init__(self, pipe: Any, upsampling: bool):
+        self._pipe = pipe
+        self.prompt_upsampler_aktiv = upsampling
+
+    def to(self, device: Any) -> _Ideogram4Adapter:
+        self._pipe = self._pipe.to(device)
+        return self
+
+    def __call__(self, prompt: str, width: int = 1024, height: int = 1024,
+                 num_inference_steps: int | None = None, guidance_scale: float | None = None,
+                 num_images_per_prompt: int = 1, generator: Any = None) -> SimpleNamespace:
+        ergebnis = SimpleNamespace()
+        if self.prompt_upsampler_aktiv:
+            _synchronisieren()
+            t0 = time.perf_counter()
+            # max_new_tokens wie im eingebauten Weg (prompt_upsampling=True reicht
+            # max_sequence_length = 2048 durch), nicht die 1024 von upsample_prompt.
+            prompt = self._pipe.upsample_prompt(prompt, height=int(height), width=int(width),
+                                                max_new_tokens=2048, generator=generator)[0]
+            _synchronisieren()
+            ergebnis.revised_prompt = prompt
+            ergebnis.upsample_seconds = round(time.perf_counter() - t0, 2)
+            ergebnis.upsample_tokens = len(self._pipe.tokenizer(prompt).input_ids)
+        kw: dict[str, Any] = dict(prompt=prompt, width=int(width), height=int(height),
+                                  num_images_per_prompt=int(num_images_per_prompt or 1),
+                                  generator=generator)
+        # Schritte und Guidance-Plan haengen zusammen (Plan-Laenge = Schritte):
+        # beides nur setzen, wenn die Anfrage es ausdruecklich will.
+        if num_inference_steps:
+            kw["num_inference_steps"] = int(num_inference_steps)
+        if guidance_scale is not None:
+            kw.update(guidance_scale=float(guidance_scale), guidance_schedule=None)
+        ergebnis.images = self._pipe(**kw).images
+        return ergebnis
+
+
+def _load_ideogram4(model_path: str, dtype: Any, opts: dict) -> Any:
+    """ideogram-4 (NF4) mit lokalem Prompt-Upsampling.
+
+    Die NF4-Quantisierung steht in den config.json der Komponenten
+    (bitsandbytes) und greift beim normalen from_pretrained.
+
+    opts:
+      COMPONENTS_DIR    Verzeichnis des LM-Kopfs (diffusers--qwen3-vl-8b-instruct-lm-head);
+                        ein bloßer Name wird relativ zum Modellspeicher aufgelöst.
+                        Pflicht, solange der Upsampler an ist.
+      PROMPT_UPSAMPLER  0/false/aus = ohne Upsampling (Vergleichsläufe, oder solange
+                        der LM-Kopf fehlt).
+    """
+    from diffusers import Ideogram4Pipeline, Ideogram4PromptEnhancerHead  # type: ignore
+
+    upsampling = _ein(opts, "PROMPT_UPSAMPLER")
+    extra: dict[str, Any] = {}
+    if upsampling:
+        comp = opts.get("COMPONENTS_DIR")
+        if not comp:
+            raise RuntimeError("ideogram-4 mit Upsampling braucht COMPONENTS_DIR "
+                               "(diffusers--qwen3-vl-8b-instruct-lm-head); ohne: PROMPT_UPSAMPLER=0")
+        kopf = _verzeichnis(model_path, comp)
+        if not kopf.is_dir():
+            raise RuntimeError(f"LM-Kopf fehlt: {kopf} (kommt über den Collection-Sync)")
+        extra["prompt_enhancer_head"] = Ideogram4PromptEnhancerHead.from_pretrained(
+            str(kopf), torch_dtype=dtype, local_files_only=True)
+    pipe = Ideogram4Pipeline.from_pretrained(model_path, torch_dtype=dtype, local_files_only=True, **extra)
+    print(f"[load] ideogram-4: Upsampling {'AN (lokal, ' + str(opts.get('COMPONENTS_DIR')) + ')' if upsampling else 'AUS'}",
+          flush=True)
+    return _Ideogram4Adapter(pipe, upsampling)
+
+
+class _HiDreamO1Adapter:
+    """diffusers-kompatible Hülle um generate_image() aus dem HiDream-O1-Code.
+
+    Parameter wie `inference.py --model_type dev` fuer Text-zu-Bild: 28 Schritte,
+    keine Guidance, shift 1,0, der feste Zeitplan DEFAULT_TIMESTEPS, Scheduler
+    "flash" mit noise_scale 8,0 am Anfang und Ende und noise_clip_std 8,0.
+
+    Die Aufloesung waehlt der Modellcode selbst: er rastet auf seine Liste
+    vorgegebener Formate ein, und die kleinste quadratische ist 2048x2048. Eine
+    Anfrage mit 1024x1024 ergibt also ein 2048er-Bild — das ist das Modell, nicht
+    ein Fehler der Hülle; die Zeiten sind deshalb nicht mit 1024er-Laeufen
+    vergleichbar.
+
+    Der Prompt-Refiner (Prompt-Refine, Gemma-4-31B) laeuft NICHT hier, sondern
+    vorab als eigener Dienst (eval/prompts_vorab.py): beide zusammen passen nicht
+    gut nebeneinander in den Speicher.
+    """
+
+    def __init__(self, model: Any, processor: Any, generate_image: Any, zeitplan: Any):
+        self._model, self._processor = model, processor
+        self._generate, self._zeitplan = generate_image, zeitplan
+
+    def to(self, _device: Any) -> _HiDreamO1Adapter:  # device_map="cuda" beim Laden
+        return self
+
+    def __call__(self, prompt: str, width: int = 2048, height: int = 2048,
+                 num_inference_steps: int | None = None, num_images_per_prompt: int = 1,
+                 generator: Any = None, **_ignoriert: Any) -> SimpleNamespace:
+        seed = 42  # Vorgabe von inference.py
+        if generator is not None:
+            seed = int(generator.initial_seed()) % (2**31)
+        bilder = [self._generate(
+            model=self._model, processor=self._processor, prompt=prompt,
+            height=int(height), width=int(width), num_inference_steps=int(num_inference_steps or 28),
+            guidance_scale=0.0, shift=1.0, timesteps_list=self._zeitplan, scheduler_name="flash",
+            seed=seed + i, noise_scale_start=8.0, noise_scale_end=8.0, noise_clip_std=8.0,
+        ) for i in range(int(num_images_per_prompt or 1))]
+        return SimpleNamespace(images=bilder)
+
+
+def _load_hidream_o1(model_path: str, dtype: Any, opts: dict) -> Any:
+    """HiDream-O1-Image-Dev mit dem Modellcode aus dem Image (/opt/hidream-o1).
+
+    Geladen wird wie in inference.py in float32 (laut Kommentar dort mit mehr
+    Details als bf16, bei mehr Speicher); gerechnet wird unter bf16-Autocast.
+    Der Profil-dtype gilt hier deshalb nicht, ausser float32 wird ausdrücklich
+    durch bfloat16 ersetzt (opts DTYPE_GEWICHTE=bfloat16).
+
+    opts:
+      CODE_DIR        Pfad zum HiDream-Code (Standard /opt/hidream-o1)
+      DTYPE_GEWICHTE  float32 (Standard, wie die Referenz) oder bfloat16
+    """
+    import sys
+
+    code = opts.get("CODE_DIR") or "/opt/hidream-o1"
+    if code not in sys.path:
+        sys.path.insert(0, code)
+    from transformers import AutoProcessor  # type: ignore
+    from models.pipeline import DEFAULT_TIMESTEPS, generate_image  # type: ignore
+    from models.qwen3_vl_transformers import Qwen3VLForConditionalGeneration  # type: ignore
+
+    gewichte = _dtype(str(opts.get("DTYPE_GEWICHTE") or "float32"))
+    processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_path, torch_dtype=gewichte, device_map="cuda", local_files_only=True).eval()
+    tok = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+    # Wie add_special_tokens() in inference.py: die Pipeline liest diese Kuerzel.
+    tok.boi_token, tok.bor_token, tok.eor_token = "<|boi_token|>", "<|bor_token|>", "<|eor_token|>"
+    tok.bot_token, tok.tms_token = "<|bot_token|>", "<|tms_token|>"
+    print(f"[load] HiDream-O1: Gewichte {gewichte}, flash-attn "
+          f"{'aus' if os.environ.get('HIDREAM_FLASH_ATTN') == '0' else 'an'}", flush=True)
+    return _HiDreamO1Adapter(model, processor, generate_image, DEFAULT_TIMESTEPS)
+
+
 LOADERS: dict[str, Callable[[str, Any, dict], Any]] = {
     "auto": _load_auto,
     "diffusion": _load_diffusion,
@@ -317,6 +493,8 @@ LOADERS: dict[str, Callable[[str, Any, dict], Any]] = {
     "flux2_singlefile": _load_flux2_singlefile,
     "flux2_bnb": _load_flux2_bnb,
     "flux3_modular": _load_flux3_modular,
+    "ideogram4": _load_ideogram4,
+    "hidream_o1": _load_hidream_o1,
 }
 
 

@@ -48,8 +48,17 @@ def load_testset(path: Path) -> list[dict]:
     return cases
 
 
-# Felder, die der Server nur bei Prompt-Upsampler liefert (FLUX.3).
-_UPSAMPLER_FELDER = ("revised_prompt", "upsample_seconds", "upsample_tokens")
+# Felder, die der Server nur bei Prompt-Upsampler liefert (FLUX.3, ideogram-4),
+# dazu der Rueckfall-Vermerk des vorab umschreibenden Refiners (HiDream-O1).
+_UPSAMPLER_FELDER = ("revised_prompt", "upsample_seconds", "upsample_tokens", "vorab_fallback")
+
+
+def vorab_laden(pfad: str | None) -> dict | None:
+    """Vorab umgeschriebene Prompts (eval/prompts_vorab.py), je Fall-ID."""
+    if not pfad:
+        return None
+    zeilen = Path(pfad).read_text(encoding="utf-8").splitlines()
+    return {(d := json.loads(z))["id"]: d for z in zeilen if z.strip()}
 
 
 def hochsetzen(args, prompt: str) -> tuple[str, float, int]:
@@ -78,41 +87,85 @@ def hochsetzen(args, prompt: str) -> tuple[str, float, int]:
     return text, round(time.perf_counter() - t0, 2), int(antwort["usage"]["completion_tokens"])
 
 
-def generate_one(endpoint: str, case: dict, args) -> dict:
-    """Ein Bild rendern; gibt PNG-Bytes + Timing zurück (oder Fehler)."""
-    prompt, hoch = case["prompt"], None
-    if args.upsampler:
-        hoch = hochsetzen(args, prompt)
-        prompt = hoch[0]
-    payload = {
-        "prompt": prompt,
-        "negative_prompt": None if args.ohne_negativ else case.get("negative_prompt"),
-        "n": 1,
-        "response_format": "b64_json",
-        "size": args.size,
-        "steps": args.steps,
-        "guidance_scale": args.guidance,
-        "seed": args.seed,
-    }
-    payload = {k: v for k, v in payload.items() if v is not None}
+def generate_chat(endpoint: str, prompt: str, case: dict, args) -> tuple[bytes, dict, float]:
+    """Bild ueber chat/completions mit modalities ["image"] (vLLM-Omni, Ming-Image).
+
+    Form wie im Rezept recipes/inclusionAI/Ming-Image.md: Bildparameter unter
+    extra_body, Antwort als data-URL in choices[0].message.content[].image_url.
+    """
+    w, h = (int(x) for x in (args.size or "1024x1024").lower().split("x"))
+    extra = {"height": h, "width": w, "num_inference_steps": args.steps,
+             "guidance_scale": args.guidance, "seed": args.seed,
+             "negative_prompt": None if args.ohne_negativ else case.get("negative_prompt")}
+    payload = {"model": args.model_name, "messages": [{"role": "user", "content": prompt}],
+               "modalities": ["image"], "extra_body": {k: v for k, v in extra.items() if v is not None}}
     req = urllib.request.Request(
-        endpoint.rstrip("/") + "/v1/images/generations",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        endpoint.rstrip("/") + "/v1/chat/completions",
+        data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
     )
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=args.timeout) as resp:
         body = json.loads(resp.read())
     dt = time.perf_counter() - t0
-    png = base64.b64decode(body["data"][0]["b64_json"])
+    inhalt = body["choices"][0]["message"]["content"]
+    teile = inhalt if isinstance(inhalt, list) else []
+    url = next((t["image_url"]["url"] for t in teile if isinstance(t, dict) and t.get("image_url")), None)
+    if not url:
+        raise RuntimeError(f"keine Bildantwort: {str(inhalt)[:200]}")
+    return base64.b64decode(url.split(",", 1)[1]), body, dt
+
+
+def generate_one(endpoint: str, case: dict, args) -> dict:
+    """Ein Bild rendern; gibt PNG-Bytes + Timing zurück (oder Fehler)."""
+    prompt, hoch, rueckfall = case["prompt"], None, None
+    if args.vorab_map is not None:
+        # Refiner lief vorab (passt nicht neben das Bildmodell): Text und Zeit
+        # aus der Datei, die Zeit zaehlt wie beim Upsampler-Dienst mit.
+        v = args.vorab_map.get(case["id"])
+        if v is None:
+            raise RuntimeError(f"kein Vorab-Prompt fuer {case['id']}")
+        hoch = (v["revised_prompt"], float(v["upsample_seconds"]), v.get("upsample_tokens"))
+        rueckfall = bool(v.get("fallback"))
+        prompt = hoch[0]
+    elif args.upsampler:
+        hoch = hochsetzen(args, prompt)
+        prompt = hoch[0]
+    if args.api == "chat":
+        png, body, dt = generate_chat(endpoint, prompt, case, args)
+    else:
+        payload = {
+            "prompt": prompt,
+            "negative_prompt": None if args.ohne_negativ else case.get("negative_prompt"),
+            "n": 1,
+            "response_format": "b64_json",
+            "size": args.size,
+            "steps": args.steps,
+            "guidance_scale": args.guidance,
+            "seed": args.seed,
+        }
+        payload = {k: v for k, v in payload.items() if v is not None}
+        req = urllib.request.Request(
+            endpoint.rstrip("/") + "/v1/images/generations",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+            body = json.loads(resp.read())
+        dt = time.perf_counter() - t0
+        png = base64.b64decode(body["data"][0]["b64_json"])
     erg = {"png": png, "gen_seconds": body.get("gen_seconds", round(dt, 2))}
     if hoch:  # Upsampler als eigener Dienst: gen_seconds umfasst ihn wie im diffusers-Weg
-        erg.update(revised_prompt=hoch[0], upsample_seconds=hoch[1], upsample_tokens=hoch[2])
+        erg.update(revised_prompt=hoch[0], upsample_seconds=hoch[1])
+        if hoch[2] is not None:
+            erg["upsample_tokens"] = hoch[2]
+        if rueckfall is not None:
+            erg["vorab_fallback"] = rueckfall
         erg["gen_seconds"] = round(erg["gen_seconds"] + hoch[1], 2)
     # Nur bei Pipelines mit Prompt-Upsampler (FLUX.3): der Text, den das
     # Bildmodell tatsaechlich bekam, und was der Upsampler gekostet hat.
     # gen_seconds bleibt die Gesamtzeit, der Upsampler ist darin enthalten.
-    revised = body["data"][0].get("revised_prompt")
+    revised = (body.get("data") or [{}])[0].get("revised_prompt")
     if revised:
         erg["revised_prompt"] = revised
     for feld in _UPSAMPLER_FELDER[1:]:
@@ -217,7 +270,12 @@ def summarize(records: list[dict], run_dir: Path, args) -> dict:
     ups = [r["upsample_seconds"] for r in records if r.get("upsample_seconds") is not None]
     if ups:
         summary["upsample_seconds_mean"] = round(statistics.mean(ups), 2)
-        summary["upsample_tokens_max"] = max(int(r.get("upsample_tokens") or 0) for r in records)
+        toks = [int(r["upsample_tokens"]) for r in records if r.get("upsample_tokens") is not None]
+        if toks:
+            summary["upsample_tokens_max"] = max(toks)
+        rueck = [r for r in records if r.get("vorab_fallback")]
+        if any("vorab_fallback" in r for r in records):
+            summary["vorab_fallback"] = len(rueck)
     (run_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
@@ -239,6 +297,9 @@ def main() -> int:
     ap.add_argument("--upsampler", help="Prompt-Upsampler als eigener Dienst (chat/completions)")
     ap.add_argument("--upsampler-model", default="")
     ap.add_argument("--upsampler-system", help="system_prompts.json des Upsamplers")
+    ap.add_argument("--vorab", help="vorab umgeschriebene Prompts (eval/prompts_vorab.py, JSONL)")
+    ap.add_argument("--api", choices=("images", "chat"), default="images",
+                    help="images = /v1/images/generations, chat = chat/completions mit Bildausgabe (vLLM-Omni)")
     ap.add_argument("--ohne-negativ", action="store_true",
                     help="keinen Negativ-Prompt senden (Modelle, die ihn ablehnen)")
     ap.add_argument("--score-only", action="store_true",
@@ -248,6 +309,7 @@ def main() -> int:
     ap.add_argument("--judge-endpoint")
     ap.add_argument("--judge-model", default="")
     args = ap.parse_args()
+    args.vorab_map = vorab_laden(args.vorab)
 
     cases = load_testset(Path(args.testset))
     if args.limit:
