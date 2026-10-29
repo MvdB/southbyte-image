@@ -299,6 +299,10 @@ def load_runs(results: Path) -> list[dict]:
         sj = d / "summary.json"
         if not sj.exists():
             continue
+        # Gemessen, aber (noch) nicht zu veroeffentlichen: Marker beim Lauf, wie in
+        # southbyte-tts (.nicht-veroeffentlichen, erste Zeile = Grund). Seit 29.10.2026.
+        if (d / ".nicht-veroeffentlichen").exists():
+            continue
         summary = json.loads(sj.read_text(encoding="utf-8"))
         scored = d / "results_scored.jsonl"
         raw = d / "results_raw.jsonl"
