@@ -221,9 +221,9 @@ def _load_dirs() -> dict:
 def _load_seitenhinweise() -> dict[str, str]:
     """`seitenhinweis` je Modell aus image_models.yaml.
 
-    Fuer Abweichungen vom Kohortenaufbau, die neben den Zahlen stehen muessen,
-    etwa eine andere Aufloesung oder eine Vorstufe, deren Zeit in Ø Zeit/Bild
-    steckt (HiDream-O1: 2048x2048 und Prompt-Refine).
+    Fuer Hinweise, die neben den Zahlen stehen muessen: Abweichungen vom
+    Kohortenaufbau (HiDream-O1: 2048x2048 und Prompt-Refine) oder ein Verhalten,
+    das die Zahlen praegt (ideogram-4: eingebauter Safety-Platzhalter).
     """
     try:
         import yaml
@@ -335,7 +335,7 @@ def build_html(runs: list[dict], docs: Path) -> str:
     abw = _load_seitenhinweise()
     gezeigt = [r["summary"]["model"] for r in runs if r["summary"]["model"] in abw]
     if gezeigt:
-        lizenz_hinweis += ('\n<p class="hint"><strong>Abweichungen vom Kohortenaufbau:</strong> '
+        lizenz_hinweis += ('\n<p class="hint"><strong>Hinweise zu einzelnen Modellen:</strong> '
                            + " · ".join(f"<strong>{html.escape(n)}</strong>: {html.escape(abw[n])}" for n in gezeigt)
                            + "</p>")
     # Welcher Testsatz gemessen wurde, gehoert auf die Seite: v1 und v2 sind
